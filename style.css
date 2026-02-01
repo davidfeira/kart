@@ -721,6 +721,135 @@ body {
 }
 
 /* ============= RESPONSIVE ============= */
+
+/* Mobile landscape - very limited height */
+@media (max-height: 500px) and (orientation: landscape) {
+    .menu-overlay {
+        justify-content: center;
+        padding: 10px;
+        overflow-y: auto;
+    }
+
+    .menu-title {
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .menu-buttons {
+        flex-direction: row;
+        gap: 0.5rem;
+    }
+
+    .menu-btn {
+        padding: 0.8rem 1.5rem;
+        font-size: 1rem;
+        min-width: auto;
+        min-height: 50px;
+    }
+
+    .select-screen {
+        padding: 0.5rem;
+        padding-top: 0.5rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .select-title {
+        width: 100%;
+        font-size: 1.2rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .select-container {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        max-height: none;
+        gap: 0.8rem;
+        padding: 0.5rem;
+        width: auto;
+        max-width: 70vw;
+    }
+
+    .select-card {
+        width: 140px;
+        min-width: 140px;
+        padding: 0.5rem;
+    }
+
+    .select-card .preview {
+        height: 50px;
+    }
+
+    .select-card .name {
+        font-size: 0.85rem;
+    }
+
+    .select-card .stats,
+    .select-card .description {
+        font-size: 0.7rem;
+    }
+
+    .stat-bar {
+        margin: 0.15rem 0;
+    }
+
+    .confirm-btn {
+        margin: 0.5rem;
+        padding: 0.8rem 2rem;
+        font-size: 1rem;
+    }
+
+    .back-btn {
+        top: 0.5rem;
+        left: 0.5rem;
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+
+    .finish-title {
+        font-size: 1.8rem;
+    }
+
+    .finish-time {
+        font-size: 1.5rem;
+    }
+
+    .lap-times {
+        font-size: 0.9rem;
+    }
+
+    .pause-title {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .hud-bottom {
+        bottom: 10px;
+    }
+
+    .hud-top {
+        top: 0.5rem;
+        gap: 1rem;
+    }
+
+    .hud-timer {
+        font-size: 1.2rem;
+    }
+
+    .hud-lap {
+        font-size: 1rem;
+    }
+
+    .hud-speed {
+        font-size: 1.5rem;
+    }
+}
+
 @media (max-width: 768px) {
     .menu-overlay {
         justify-content: flex-start;

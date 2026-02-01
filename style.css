@@ -1,0 +1,552 @@
+/* Mario Kart Clone - Arcade Style CSS */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    overflow: hidden;
+    background: #000;
+    font-family: 'Orbitron', monospace;
+}
+
+#game-canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* ============= MENU OVERLAYS ============= */
+.menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(0,0,0,0.9) 0%, rgba(20,20,40,0.95) 100%);
+    z-index: 100;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.menu-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.menu-title {
+    font-size: 4rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow:
+        0 0 10px #0ff,
+        0 0 20px #0ff,
+        0 0 40px #0ff,
+        0 0 80px #00f;
+    margin-bottom: 2rem;
+    letter-spacing: 0.2em;
+    animation: titlePulse 2s ease-in-out infinite;
+}
+
+@keyframes titlePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+}
+
+.menu-subtitle {
+    font-size: 1.2rem;
+    color: #0ff;
+    margin-bottom: 3rem;
+    text-shadow: 0 0 10px #0ff;
+}
+
+/* Menu Buttons */
+.menu-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.menu-btn {
+    padding: 1rem 3rem;
+    font-family: 'Orbitron', monospace;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(180deg, rgba(0,255,255,0.2) 0%, rgba(0,100,150,0.3) 100%);
+    border: 2px solid #0ff;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    min-width: 280px;
+}
+
+.menu-btn:hover, .menu-btn.selected {
+    background: linear-gradient(180deg, rgba(0,255,255,0.4) 0%, rgba(0,150,200,0.5) 100%);
+    transform: scale(1.05);
+    box-shadow:
+        0 0 20px rgba(0,255,255,0.5),
+        inset 0 0 20px rgba(0,255,255,0.1);
+}
+
+.menu-btn:active {
+    transform: scale(0.98);
+}
+
+/* ============= KART SELECT ============= */
+.select-screen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+}
+
+.select-title {
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 0 20px #0ff;
+    margin-bottom: 1rem;
+}
+
+.select-container {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 2rem 0;
+}
+
+.select-card {
+    width: 200px;
+    padding: 1.5rem;
+    background: rgba(0,50,80,0.5);
+    border: 2px solid rgba(0,255,255,0.3);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-align: center;
+}
+
+.select-card:hover, .select-card.selected {
+    border-color: #0ff;
+    background: rgba(0,100,150,0.6);
+    transform: translateY(-5px);
+    box-shadow: 0 10px 30px rgba(0,255,255,0.3);
+}
+
+.select-card .preview {
+    width: 150px;
+    height: 100px;
+    margin: 0 auto 1rem;
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.select-card .name {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.select-card .stats {
+    font-size: 0.8rem;
+    color: #aaa;
+}
+
+.stat-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.3rem 0;
+}
+
+.stat-label {
+    width: 60px;
+    text-align: right;
+    font-size: 0.7rem;
+    color: #888;
+}
+
+.stat-fill {
+    flex: 1;
+    height: 8px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.stat-fill-inner {
+    height: 100%;
+    background: linear-gradient(90deg, #0f0, #ff0);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.confirm-btn {
+    margin-top: 2rem;
+    padding: 1rem 4rem;
+    font-family: 'Orbitron', monospace;
+    font-size: 1.5rem;
+    font-weight: 900;
+    color: #000;
+    background: linear-gradient(180deg, #0ff 0%, #0aa 100%);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+}
+
+.confirm-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 30px rgba(0,255,255,0.6);
+}
+
+.back-btn {
+    position: absolute;
+    top: 2rem;
+    left: 2rem;
+    padding: 0.5rem 1.5rem;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.9rem;
+    color: #888;
+    background: transparent;
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.back-btn:hover {
+    color: #fff;
+    border-color: #0ff;
+}
+
+/* ============= TRACK SELECT ============= */
+.track-card {
+    width: 280px;
+    padding: 1.5rem;
+}
+
+.track-card .preview {
+    width: 240px;
+    height: 160px;
+}
+
+.track-card .description {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.5rem;
+}
+
+/* ============= COUNTDOWN ============= */
+.countdown-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    pointer-events: none;
+}
+
+.countdown-number {
+    font-size: 15rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow:
+        0 0 20px #f00,
+        0 0 40px #f00,
+        0 0 80px #f00;
+    animation: countdownPop 1s ease-out;
+}
+
+.countdown-number.go {
+    font-size: 10rem;
+    color: #0f0;
+    text-shadow:
+        0 0 20px #0f0,
+        0 0 40px #0f0,
+        0 0 80px #0f0;
+}
+
+@keyframes countdownPop {
+    0% { transform: scale(2); opacity: 0; }
+    20% { transform: scale(1); opacity: 1; }
+    80% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(0.8); opacity: 0; }
+}
+
+/* ============= HUD ============= */
+.hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 50;
+}
+
+.hud.hidden {
+    display: none;
+}
+
+.hud-top {
+    position: absolute;
+    top: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 3rem;
+    align-items: center;
+}
+
+.hud-timer {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #0ff;
+    text-shadow: 0 0 10px #0ff;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-lap {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffd700;
+    text-shadow: 0 0 10px #ffd700;
+}
+
+.hud-bottom {
+    position: absolute;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.hud-speed {
+    font-size: 3rem;
+    font-weight: 900;
+    color: #0f0;
+    text-shadow: 0 0 15px #0f0;
+}
+
+.hud-speed-unit {
+    font-size: 1rem;
+    color: #888;
+    margin-left: 0.5rem;
+}
+
+.hud-position {
+    position: absolute;
+    top: 1.5rem;
+    right: 2rem;
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 0 10px #fff;
+}
+
+.hud-drift {
+    position: absolute;
+    bottom: 6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.5rem 2rem;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #f0f;
+    text-shadow: 0 0 10px #f0f;
+    background: rgba(255,0,255,0.2);
+    border: 2px solid #f0f;
+    border-radius: 20px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.hud-drift.active {
+    opacity: 1;
+    animation: driftPulse 0.3s ease-in-out infinite;
+}
+
+@keyframes driftPulse {
+    0%, 100% { transform: translateX(-50%) scale(1); }
+    50% { transform: translateX(-50%) scale(1.05); }
+}
+
+.hud-boost {
+    position: absolute;
+    bottom: 6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 2rem;
+    font-weight: 900;
+    color: #ff0;
+    text-shadow: 0 0 20px #ff0;
+    opacity: 0;
+    animation: boostFlash 0.5s ease-out;
+}
+
+@keyframes boostFlash {
+    0% { opacity: 1; transform: translateX(-50%) scale(1.5); }
+    100% { opacity: 0; transform: translateX(-50%) scale(1); }
+}
+
+/* ============= PAUSE MENU ============= */
+.pause-overlay {
+    background: rgba(0,0,0,0.8);
+}
+
+.pause-title {
+    font-size: 3rem;
+    color: #ff0;
+    text-shadow: 0 0 20px #ff0;
+    margin-bottom: 2rem;
+}
+
+/* ============= FINISH SCREEN ============= */
+.finish-overlay {
+    background: linear-gradient(135deg, rgba(0,50,0,0.95) 0%, rgba(0,20,0,0.98) 100%);
+}
+
+.finish-title {
+    font-size: 4rem;
+    font-weight: 900;
+    color: #0f0;
+    text-shadow:
+        0 0 20px #0f0,
+        0 0 40px #0f0;
+    margin-bottom: 1rem;
+}
+
+.finish-time {
+    font-size: 3rem;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.finish-label {
+    font-size: 1rem;
+    color: #888;
+    margin-bottom: 2rem;
+}
+
+.lap-times {
+    margin-bottom: 2rem;
+}
+
+.lap-time-row {
+    font-size: 1.2rem;
+    color: #aaa;
+    margin: 0.5rem 0;
+}
+
+.lap-time-row.best {
+    color: #ffd700;
+}
+
+/* ============= LOADING ============= */
+.loading-overlay {
+    background: #000;
+}
+
+.loading-text {
+    font-size: 1.5rem;
+    color: #0ff;
+    animation: loadingPulse 1s ease-in-out infinite;
+}
+
+@keyframes loadingPulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+.loading-bar {
+    width: 300px;
+    height: 8px;
+    background: rgba(0,255,255,0.2);
+    border-radius: 4px;
+    margin-top: 1rem;
+    overflow: hidden;
+}
+
+.loading-bar-fill {
+    height: 100%;
+    background: #0ff;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+/* ============= CONTROLS HINT ============= */
+.controls-hint {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.8rem;
+    color: #555;
+}
+
+.controls-hint kbd {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid #444;
+    border-radius: 3px;
+    margin: 0 0.2rem;
+}
+
+/* ============= MINIMAP ============= */
+.minimap {
+    position: absolute;
+    bottom: 2rem;
+    right: 2rem;
+    width: 150px;
+    height: 150px;
+    background: rgba(0,0,0,0.5);
+    border: 2px solid rgba(0,255,255,0.3);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.minimap canvas {
+    width: 100%;
+    height: 100%;
+}
+
+/* ============= RESPONSIVE ============= */
+@media (max-width: 768px) {
+    .menu-title {
+        font-size: 2.5rem;
+    }
+
+    .select-container {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .hud-timer {
+        font-size: 1.5rem;
+    }
+
+    .hud-speed {
+        font-size: 2rem;
+    }
+}

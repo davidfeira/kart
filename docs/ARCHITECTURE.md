@@ -2,7 +2,7 @@
 
 ## Current Implementation Status
 
-The game is currently implemented as a **single-file application** in `index.html` (~2750 lines). This document describes both the current architecture and the planned modular structure outlined in [CLAUDE.md](../CLAUDE.md).
+The game is now **fully modularized** across 14 ES module files in `src/`. The entry point `index.html` is a thin shell (141 lines) that just bootstraps the `Game` class.
 
 ## System Diagram
 
@@ -31,101 +31,149 @@ The game is currently implemented as a **single-file application** in `index.htm
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Current Classes (in index.html)
+## File Structure
 
-### Configuration
-- **CONFIG** - Physics, camera, and race settings
-- **KART_TYPES** - Speedster, Tank, Dart, Buggy definitions
-- **TRACK_PRESETS** - Oval, Figure 8, Grand Circuit, Drift Circuit definitions
+```
+mario-kart-clone/
+├── index.html              (141 lines) - Entry point, HTML structure
+├── style.css               (961 lines) - All styles including mobile
+├── server.js               (130 lines) - Dev server for logging
+├── devmode.bat             - Launches dev server + browser
+├── src/
+│   ├── core/
+│   │   ├── Game.js         (295 lines) - Main orchestrator, render loop
+│   │   ├── CameraController.js (91 lines) - Third-person camera
+│   │   └── TrackFrame.js   (35 lines) - TNB coordinate frame
+│   ├── entities/
+│   │   ├── Kart.js         (1200 lines) - Full kart physics + visuals
+│   │   ├── KartFactory.js  (95 lines) - Procedural kart geometry
+│   │   └── kartTypes.js    (40 lines) - Kart stat definitions
+│   ├── systems/
+│   │   ├── InputManager.js (146 lines) - Keyboard + touch input
+│   │   └── CheckpointManager.js (86 lines) - Lap tracking, timing
+│   ├── tracks/
+│   │   ├── TrackGenerator.js (530 lines) - Track mesh, barriers, lights
+│   │   └── trackPresets.js (90 lines) - Track path generators
+│   ├── ui/
+│   │   ├── MenuManager.js  (310 lines) - All menu screens
+│   │   └── HUDController.js (70 lines) - Speed, lap, timer display
+│   └── utils/
+│       ├── logger.js       (298 lines) - Centralized logging system
+│       └── config.js       (80 lines) - Physics, camera, race config
+├── docs/
+│   ├── ARCHITECTURE.md     - This file
+│   ├── API.md              - Public interfaces
+│   └── CHANGELOG.md        - Version history
+└── logs/                   - Dev mode log output
+```
 
-### Core Classes
+## Module Descriptions
 
-| Class | Lines | Responsibility |
-|-------|-------|----------------|
-| `InputManager` | ~70 | Keyboard input capture and state |
-| `Kart` | ~400 | Kart mesh, physics, drift mechanics, particles |
-| `TrackGenerator` | ~450 | Track geometry, barriers, stadium lights, banking |
-| `CheckpointManager` | ~80 | Lap counting and race timing |
-| `CameraController` | ~75 | Third-person camera with look-ahead, shake |
-| `MenuManager` | ~350 | All menu screens and navigation |
-| `HUDController` | ~50 | Speed, lap, timer, drift indicator display |
-| `Game` | ~300 | Main orchestrator, game loop, sky shader |
+### Core (`src/core/`)
 
-### Static Utilities
-- `KartFactory.createMesh()` - Procedural kart geometry builder
-- `KartFactory.createPreview()` - Menu preview kart creator
+| Module | Purpose |
+|--------|---------|
+| `Game.js` | Main game class, scene setup, lighting, sky shader, game loop, state management |
+| `CameraController.js` | Third-person camera with look-ahead, speed-based FOV, boost shake |
+| `TrackFrame.js` | Tangent-Normal-Binormal coordinate frame for track-relative physics |
 
-### Visual Systems
-- **Skybox** - Custom shader with blue gradient (follows camera)
-- **Drift particles** - Smoke trails from rear wheels during drift
-- **Spark particles** - Orange/yellow sparks when charging boost
-- **Boost flame** - Cone mesh on kart rear during boost
-- **Stadium lights** - Pole + emissive fixture around track perimeter
-- **Track banking** - Outer edge elevation on curves
+### Entities (`src/entities/`)
+
+| Module | Purpose |
+|--------|---------|
+| `Kart.js` | Complete kart: mesh, physics, drift mechanics, particles, boost |
+| `KartFactory.js` | Procedural geometry builder for kart meshes |
+| `kartTypes.js` | Speedster, Tank, Dart, Buggy definitions with stats |
+
+### Systems (`src/systems/`)
+
+| Module | Purpose |
+|--------|---------|
+| `InputManager.js` | Keyboard events + touch button handling |
+| `CheckpointManager.js` | Checkpoint crossing detection, lap counting, timing |
+
+### Tracks (`src/tracks/`)
+
+| Module | Purpose |
+|--------|---------|
+| `TrackGenerator.js` | Road mesh, barriers, stadium lights, track banking, collision |
+| `trackPresets.js` | Oval, Figure8, GrandCircuit, DriftCircuit path generators |
+
+### UI (`src/ui/`)
+
+| Module | Purpose |
+|--------|---------|
+| `MenuManager.js` | Main menu, kart/track selection, pause, finish screens |
+| `HUDController.js` | Speed display, lap counter, race timer, drift indicator |
+
+### Utils (`src/utils/`)
+
+| Module | Purpose |
+|--------|---------|
+| `logger.js` | Multi-level logging with dev server file output |
+| `config.js` | CONFIG object with physics, camera, race constants |
 
 ## Game State Flow
 
 ```
 MENU → KART_SELECT → TRACK_SELECT → LOADING → COUNTDOWN → RACING → FINISHED
-  ↑                                                                    │
+  ↑         ↑              ↑                                           │
+  │         │              │                                           │
+  │         └──────────────┴────────── PAUSED ←────────────────────────┤
+  │                                                                    │
   └────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
 
-1. **Input** - `InputManager` captures keyboard events, stores in `keys` object
-2. **Update** - `Kart.update()` reads input state, calculates physics
-3. **Physics** - Speed, rotation, drift, collision with track boundaries
-4. **Camera** - `CameraController` follows kart with damping
-5. **Render** - Three.js renders scene at 60fps
+1. **Input** - `InputManager` captures keyboard/touch events → `keys` object
+2. **Update** - `Game.update()` passes input to `Kart.update()`
+3. **Physics** - Kart calculates speed, rotation, drift, track-relative movement
+4. **Collision** - `TrackGenerator.getTrackBoundaryCollision()` checks barriers
+5. **Camera** - `CameraController` follows kart with damping and effects
+6. **Checkpoints** - `CheckpointManager` detects lap completion
+7. **Render** - Three.js renders scene at 60fps
 
-## Planned Modular Structure
+## Track-Relative Physics (R4 Style)
 
-Per [CLAUDE.md](../CLAUDE.md) guidelines, the codebase should be refactored to:
+The `TrackFrame` class implements TNB (Tangent-Normal-Binormal) coordinates:
+- **T** (tangent) - Points along track direction
+- **N** (normal) - Points toward track center
+- **B** (binormal) - Points up from track surface
 
-```
-src/
-├── core/           # Game.js, SceneManager.js, GameLoop.js
-├── entities/       # Kart.js, PlayerKart.js, AIKart.js
-├── systems/        # PhysicsSystem.js, InputSystem.js, CollisionSystem.js
-├── tracks/         # Track.js, TrackGenerator.js, TrackLoader.js
-├── ui/             # MenuManager.js, HUDController.js
-└── utils/          # logger.js, constants.js, math.js
-```
-
-**Target**: Each file should be under 300 lines.
-
-## Dependencies
-
-- **Three.js r160** - 3D rendering (via CDN)
-- **ES Modules** - Modern JavaScript module system
+This allows physics calculations in track-relative space, giving R4/Ridge Racer style handling where the car follows the track naturally.
 
 ## Logging System
-
-The project uses a centralized logging system defined in `src/utils/logger.js`:
 
 ```javascript
 import { Logger } from './src/utils/logger.js';
 const log = Logger.getLogger('ModuleName');
 
 log.debug('Debug message');
-log.info('Info message');
+log.info('Info message', { data: value });
 log.warn('Warning message');
-log.error('Error message', { context: data });
+log.error('Error message', error);
 ```
 
-Logs are stored in memory, persisted to localStorage, and can be exported/downloaded. See [API.md](./API.md) for full logger API.
+In dev mode (`devmode.bat`), logs POST to the server and write to `logs/` folder.
 
-## Performance Considerations
+## Dependencies
 
-Current implementation includes:
+- **Three.js r160** - 3D rendering (via CDN importmap)
+- **ES Modules** - Modern JavaScript module system
+- **Node.js** - Dev server for logging (optional)
+
+## Performance Notes
+
 - Procedural geometry (no external model loading)
 - Canvas-based procedural textures
-- Basic frustum culling (Three.js default)
-- Single active kart (no AI opponents yet)
+- Single active kart (no AI yet)
+- Basic Three.js frustum culling
 
-Future optimizations needed:
-- Object pooling for items/effects
-- Instanced meshes for repeated objects
-- LOD for distant objects
-- Web Workers for physics (if needed)
+## File Size Compliance
+
+Per CLAUDE.md guidelines:
+- **Target**: < 300 lines ✓ (most modules)
+- **Warning**: > 500 lines ⚠ (Kart.js, TrackGenerator.js)
+- Kart.js at 1200 lines could be split into KartPhysics.js + KartVisuals.js
+- TrackGenerator.js at 530 lines could be split into TrackGeometry.js + TrackCollision.js

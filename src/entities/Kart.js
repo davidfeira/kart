@@ -1,0 +1,911 @@
+/**
+ * Kart Class
+ *
+ * Main kart entity with physics, drift mechanics, and visual effects.
+ * Extracted from index.html during refuckulation.
+ *
+ * Visual effects are in KartVisuals.js.
+ */
+
+import * as THREE from 'three';
+import { Logger } from '../utils/logger.js';
+import { CONFIG } from '../utils/config.js';
+import { KART_TYPES } from './kartTypes.js';
+import { TrackFrame } from '../core/TrackFrame.js';
+import { createKartGeometry } from './KartFactory.js';
+import * as KartVisuals from './KartVisuals.js';
+
+const kartLog = Logger.getLogger('Kart');
+
+export class Kart {
+    constructor(type, scene) {
+        this.type = type;
+        this.scene = scene;
+        this.config = KART_TYPES[type];
+        this.mesh = createKartGeometry(type);
+        scene.add(this.mesh);
+
+        // Drift particle system (uses KartVisuals)
+        this.driftParticles = KartVisuals.createDriftParticles();
+        scene.add(this.driftParticles);
+
+        // Boost flame effect (uses KartVisuals)
+        this.boostFlame = KartVisuals.createBoostFlame();
+        this.mesh.add(this.boostFlame);
+
+        // Spark particle system for drift boost charging (uses KartVisuals)
+        this.sparkParticles = KartVisuals.createSparkParticles();
+        scene.add(this.sparkParticles);
+
+        // Physics state - VELOCITY BASED
+        this.position = new THREE.Vector3(0, 0, 0);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.rotation = 0; // Y-axis rotation in radians
+        this.angularVelocity = 0;
+
+        // Vertical physics
+        this.verticalVelocity = 0;
+        this.isGrounded = true;
+        this.groundNormal = new THREE.Vector3(0, 1, 0);
+        this.previousGroundNormal = new THREE.Vector3(0, 1, 0);
+
+        // Track-relative physics (R4 style)
+        this.trackFrame = new TrackFrame();
+        this.previousTrackFrame = null;
+        this.lastTrackT = 0;
+        this.localVelocity = new THREE.Vector3(); // Velocity in TNB frame
+        this.surfaceAttached = true;
+        this.airTime = 0;
+
+        // Steering state
+        this.steeringInput = 0;
+        this.steeringAngle = 0;
+
+        // Drift state machine: 'NONE', 'INITIATING', 'DRIFTING', 'EXITING'
+        this.driftState = 'NONE';
+        this.driftDirection = 0;
+        this.driftAngle = 0;
+        this.driftTime = 0;
+        this.driftBoostLevel = 0;
+
+        // Boost state
+        this.boostTimeRemaining = 0;
+        this.boostPower = 0;
+
+        // Derived values
+        this.forwardSpeed = 0;
+        this.lateralSpeed = 0;
+
+        // Visual state
+        this.pitch = 0;
+        this.roll = 0;
+
+        // Collision
+        this.boundingRadius = 1.2;
+
+        // Backwards compatibility
+        this.speed = 0;
+        this.isDrifting = false;
+
+        // Physics logging state
+        this._logFrameCounter = 0;
+        this._lastLoggedGrounded = true;
+
+        kartLog.info('Kart created', { type, stats: this.config.stats });
+    }
+
+    update(input, delta, trackGenerator = null) {
+        const p = CONFIG.physics;
+        const mod = this.config.modifiers;
+
+        // Cap delta to prevent physics explosions
+        const dt = Math.min(delta, 0.05);
+
+        // If trackGenerator provided, use new track-relative physics
+        if (trackGenerator) {
+            this.updateTrackPhysics(input, dt, trackGenerator, mod);
+        } else {
+            // Fallback to old physics (for compatibility)
+            this.updateLegacyPhysics(input, dt, mod);
+        }
+
+        // ===== PHYSICS LOGGING =====
+        this._logFrameCounter++;
+
+        // Log ground contact changes
+        if (this.isGrounded !== this._lastLoggedGrounded) {
+            kartLog.debug(this.isGrounded ? 'Landed' : 'Airborne', {
+                speed: this.forwardSpeed.toFixed(1),
+                vertVel: this.verticalVelocity.toFixed(2)
+            });
+            this._lastLoggedGrounded = this.isGrounded;
+        }
+
+        // Log physics state every 60 frames (~1 second at 60fps)
+        if (this._logFrameCounter % 60 === 0) {
+            kartLog.debug('Physics state', {
+                pos: `${this.position.x.toFixed(1)},${this.position.z.toFixed(1)}`,
+                speed: this.forwardSpeed.toFixed(1),
+                drift: this.driftState,
+                grounded: this.isGrounded
+            });
+        }
+
+        // ===== UPDATE VISUALS =====
+        this.updateVisuals(input, dt);
+    }
+
+    // New R4-style track-relative physics
+    updateTrackPhysics(input, dt, trackGenerator, mod) {
+        const p = CONFIG.physics;
+
+        // Store previous track frame for ramp detection
+        if (this.trackFrame) {
+            this.previousTrackFrame = this.trackFrame.clone();
+        }
+
+        // Get current track frame (optimized with lastT cache)
+        this.trackFrame = trackGenerator.getTrackFrame(this.position, this.lastTrackT);
+        this.lastTrackT = this.trackFrame.t;
+
+        // Project world velocity into local TNB frame
+        this.projectVelocityToLocal();
+
+        // Update derived values for compatibility
+        this.forwardSpeed = this.localVelocity.x;
+        this.lateralSpeed = this.localVelocity.z;
+        this.speed = this.forwardSpeed;
+        this.isDrifting = this.driftState === 'DRIFTING';
+
+        // Get effective max speed
+        const effectiveMaxSpeed = this.getMaxSpeed(mod);
+
+        // ===== STEERING =====
+        this.processSteeringInput(input, dt, effectiveMaxSpeed);
+
+        // ===== DRIFT STATE MACHINE =====
+        this.updateDriftState(input, dt, null); // Pass null, we use local velocity now
+
+        // ===== APPLY HEADING (rotation) =====
+        this.updateHeading(dt);
+
+        // ===== ACCELERATION / BRAKING (in local frame) =====
+        this.applyLocalAcceleration(input, dt, mod, effectiveMaxSpeed);
+
+        // ===== APPLY LATERAL GRIP (in local frame) =====
+        this.applyLocalLateralGrip(dt);
+
+        // ===== TRACK-RELATIVE GRAVITY =====
+        this.applyTrackGravity(dt);
+
+        // ===== BOOST =====
+        this.updateLocalBoost(dt);
+
+        // ===== FRICTION =====
+        if (this.surfaceAttached) {
+            this.localVelocity.x *= (1 - p.groundFriction);
+        }
+
+        // ===== SPEED LIMITS =====
+        if (Math.abs(this.localVelocity.x) > effectiveMaxSpeed) {
+            this.localVelocity.x = Math.sign(this.localVelocity.x) * effectiveMaxSpeed;
+        }
+
+        // ===== CONVERT BACK TO WORLD VELOCITY =====
+        this.projectVelocityToWorld();
+
+        // ===== INTEGRATE POSITION =====
+        this.position.addScaledVector(this.velocity, dt);
+
+        // ===== SURFACE ATTACHMENT =====
+        this.updateSurfaceAttachment(dt);
+
+        // ===== RAMP LAUNCH CHECK =====
+        this.checkTrackRampLaunch();
+
+        // Update derived speed values
+        this.forwardSpeed = this.localVelocity.x;
+        this.speed = this.forwardSpeed;
+    }
+
+    // Legacy physics for backwards compatibility
+    updateLegacyPhysics(input, dt, mod) {
+        const p = CONFIG.physics;
+
+        // Calculate forward and right vectors
+        const forward = new THREE.Vector3(Math.sin(this.rotation), 0, Math.cos(this.rotation));
+        const right = new THREE.Vector3(forward.z, 0, -forward.x);
+
+        // Calculate current speeds
+        this.forwardSpeed = this.velocity.dot(forward);
+        this.lateralSpeed = this.velocity.dot(right);
+
+        // Backwards compatibility
+        this.speed = this.forwardSpeed;
+        this.isDrifting = this.driftState === 'DRIFTING';
+
+        // Get effective max speed
+        const effectiveMaxSpeed = this.getMaxSpeed(mod);
+
+        // ===== STEERING =====
+        this.processSteeringInput(input, dt, effectiveMaxSpeed);
+
+        // ===== ACCELERATION / BRAKING =====
+        this.processAcceleration(input, dt, forward, mod, effectiveMaxSpeed);
+
+        // ===== DRIFT STATE MACHINE =====
+        this.updateDriftState(input, dt, right);
+
+        // ===== APPLY GRIP / TRACTION =====
+        this.applyTractionModel(dt, forward, right, effectiveMaxSpeed);
+
+        // ===== BOOST =====
+        this.updateBoost(dt, forward);
+
+        // ===== FRICTION =====
+        if (this.isGrounded) {
+            const frictionForce = this.velocity.clone().multiplyScalar(-p.groundFriction);
+            this.velocity.add(frictionForce);
+        }
+
+        // ===== SPEED LIMITS =====
+        const currentSpeed = this.velocity.length();
+        if (currentSpeed > effectiveMaxSpeed) {
+            this.velocity.multiplyScalar(effectiveMaxSpeed / currentSpeed);
+        }
+
+        // ===== INTEGRATE POSITION =====
+        this.position.addScaledVector(this.velocity, dt);
+
+        // Update derived speed values
+        this.forwardSpeed = this.velocity.dot(forward);
+        this.speed = this.forwardSpeed;
+    }
+
+    // Apply heading changes (steering/turning)
+    updateHeading(dt) {
+        const p = CONFIG.physics;
+        const speed = Math.abs(this.localVelocity.x);
+
+        if (speed > 2 && this.surfaceAttached) {
+            const turnDir = this.localVelocity.x > 0 ? 1 : -1;
+            let turnRate = this.steeringAngle * p.steeringSensitivity * turnDir;
+
+            // During drift, reduce direct steering effect
+            if (this.driftState === 'DRIFTING') {
+                turnRate *= 0.6;
+            }
+
+            this.angularVelocity = turnRate;
+        } else if (!this.surfaceAttached) {
+            // Air control
+            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * p.airControl;
+        } else {
+            this.angularVelocity = 0;
+        }
+
+        this.rotation += this.angularVelocity * dt;
+    }
+
+    // Boost in local frame
+    updateLocalBoost(dt) {
+        if (this.boostTimeRemaining > 0) {
+            this.boostTimeRemaining -= dt;
+
+            // Apply boost acceleration in local forward direction
+            const boostAccel = 200 * dt * (this.boostPower / CONFIG.physics.driftBoostPower[2]);
+            this.localVelocity.x += boostAccel;
+        } else {
+            this.boostPower = 0;
+        }
+    }
+
+    getMaxSpeed(mod) {
+        const p = CONFIG.physics;
+        let maxSpeed = p.maxSpeed * mod.maxSpeed;
+        if (this.boostTimeRemaining > 0) {
+            maxSpeed += this.boostPower;
+        }
+        return maxSpeed;
+    }
+
+    // ===== TRACK-RELATIVE PHYSICS (R4 Style) =====
+
+    // Get car's forward direction based on its rotation (heading)
+    getCarForward() {
+        return new THREE.Vector3(Math.sin(this.rotation), 0, Math.cos(this.rotation));
+    }
+
+    // Get car's right direction based on its rotation
+    getCarRight() {
+        const forward = this.getCarForward();
+        return new THREE.Vector3(forward.z, 0, -forward.x);
+    }
+
+    // Project world velocity into car-local frame (using car heading, not track tangent)
+    projectVelocityToLocal() {
+        const forward = this.getCarForward();
+        const right = this.getCarRight();
+
+        this.localVelocity.set(
+            this.velocity.dot(forward),                   // Forward speed (car's heading)
+            this.velocity.dot(this.trackFrame.normal),    // Vertical speed (perpendicular to track surface)
+            this.velocity.dot(right)                      // Lateral speed (car's right)
+        );
+    }
+
+    // Convert local velocity back to world space (using car heading)
+    projectVelocityToWorld() {
+        const forward = this.getCarForward();
+        const right = this.getCarRight();
+
+        this.velocity.set(0, 0, 0);
+        this.velocity.addScaledVector(forward, this.localVelocity.x);
+        this.velocity.addScaledVector(this.trackFrame.normal, this.localVelocity.y);
+        this.velocity.addScaledVector(right, this.localVelocity.z);
+    }
+
+    // Apply gravity in track-relative frame
+    applyTrackGravity(dt) {
+        const p = CONFIG.physics;
+        const tp = p.trackPhysics;
+
+        if (this.surfaceAttached) {
+            // Calculate slope relative to car's forward direction
+            const forward = this.getCarForward();
+            const slopeDot = -(forward.x * this.trackFrame.normal.x + forward.z * this.trackFrame.normal.z);
+            const slopeAngle = Math.asin(THREE.MathUtils.clamp(slopeDot, -1, 1));
+
+            // Apply gravity along slope
+            const slopeGravity = tp.gravityAlongTrack * Math.sin(slopeAngle);
+            this.localVelocity.x -= slopeGravity * dt;
+
+            // No vertical velocity when attached to surface
+            this.localVelocity.y = 0;
+        } else {
+            // In air: full world gravity, projected into car's local frame
+            const forward = this.getCarForward();
+            const right = this.getCarRight();
+            const worldGravityY = -p.gravity;
+
+            this.localVelocity.x += forward.y * worldGravityY * dt;
+            this.localVelocity.y += this.trackFrame.normal.y * worldGravityY * dt;
+            this.localVelocity.z += right.y * worldGravityY * dt;
+
+            // Terminal velocity
+            if (this.localVelocity.y < -p.terminalVelocity) {
+                this.localVelocity.y = -p.terminalVelocity;
+            }
+        }
+    }
+
+    // Handle surface attachment - replaces spring-damper
+    updateSurfaceAttachment(dt) {
+        const tp = CONFIG.physics.trackPhysics;
+
+        // Calculate height above track surface
+        const heightAboveTrack = this.position.y - this.trackFrame.position.y;
+
+        if (this.surfaceAttached) {
+            // Currently attached to surface
+            if (heightAboveTrack > tp.attachmentThreshold || this.localVelocity.y > 5) {
+                // Left the surface (ramp, jump, or intentional launch)
+                this.surfaceAttached = false;
+                this.airTime = 0;
+                this.isGrounded = false;
+                kartLog.debug('Left surface', { height: heightAboveTrack, velY: this.localVelocity.y });
+            } else {
+                // Stay attached: smoothly follow surface
+                const targetY = this.trackFrame.position.y;
+                this.position.y = THREE.MathUtils.lerp(
+                    this.position.y,
+                    targetY,
+                    1 - Math.exp(-tp.attachmentBlendSpeed * dt)
+                );
+                this.isGrounded = true;
+            }
+        } else {
+            // In the air
+            this.airTime += dt;
+
+            // Check for landing
+            if (heightAboveTrack <= 0.1) {
+                const impactSpeed = -this.localVelocity.y;
+
+                if (impactSpeed > 40) {
+                    // Hard landing: small bounce
+                    this.localVelocity.y = impactSpeed * 0.2;
+                    this.position.y = this.trackFrame.position.y + 0.1;
+                    kartLog.debug('Hard landing bounce', { impactSpeed });
+                } else {
+                    // Soft landing: attach to surface
+                    this.surfaceAttached = true;
+                    this.isGrounded = true;
+                    this.localVelocity.y = 0;
+                    this.position.y = this.trackFrame.position.y;
+                    kartLog.debug('Landed', { airTime: this.airTime, impactSpeed });
+                }
+            }
+        }
+
+        // Update ground normal for orientation
+        this.groundNormal.copy(this.trackFrame.normal);
+    }
+
+    // Apply lateral grip in local frame
+    applyLocalLateralGrip(dt) {
+        const p = CONFIG.physics;
+        const tp = p.trackPhysics;
+
+        if (!this.surfaceAttached) return;
+
+        let gripMultiplier = 1.0;
+
+        // Drift reduces rear grip significantly
+        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
+            gripMultiplier = tp.driftRearGripMultiplier;
+        }
+
+        // Apply lateral grip force to reduce sideways velocity
+        const lateralGrip = -this.localVelocity.z * p.gripCoefficient * gripMultiplier;
+        this.localVelocity.z += lateralGrip * dt;
+    }
+
+    // Apply acceleration in local frame
+    applyLocalAcceleration(input, dt, mod, effectiveMaxSpeed) {
+        const p = CONFIG.physics;
+
+        // Acceleration curve - stronger at low speed
+        const getAccelCurve = (speed) => {
+            const ratio = Math.abs(speed) / effectiveMaxSpeed;
+            return 1.0 - (ratio * ratio * 0.7);
+        };
+
+        const forwardSpeed = this.localVelocity.x;
+
+        if (input.forward && forwardSpeed < effectiveMaxSpeed) {
+            const accelMultiplier = getAccelCurve(forwardSpeed);
+            const accelForce = p.accelerationForce * mod.acceleration * accelMultiplier * dt;
+            this.localVelocity.x += accelForce;
+        } else if (input.backward) {
+            if (forwardSpeed > 5) {
+                // Braking
+                this.localVelocity.x -= p.brakeForce * dt;
+            } else {
+                // Reverse
+                const reverseForce = p.accelerationForce * 0.6 * dt;
+                this.localVelocity.x -= reverseForce;
+                // Clamp reverse speed
+                if (this.localVelocity.x < -p.reverseMaxSpeed) {
+                    this.localVelocity.x = -p.reverseMaxSpeed;
+                }
+            }
+        } else if (forwardSpeed > 0 && this.surfaceAttached) {
+            // Coast deceleration
+            this.localVelocity.x -= p.coastDeceleration * dt;
+            if (this.localVelocity.x < 0) this.localVelocity.x = 0;
+        }
+    }
+
+    // Check for ramp launch using track frame slope change
+    checkTrackRampLaunch() {
+        const p = CONFIG.physics;
+
+        if (!this.surfaceAttached) return;
+        if (!this.previousTrackFrame) return;
+
+        const speed = Math.abs(this.localVelocity.x);
+        if (speed < p.rampSpeedThreshold) return;
+
+        // Detect slope discontinuity
+        const slopeBefore = this.previousTrackFrame.slope;
+        const slopeNow = this.trackFrame.slope;
+        const slopeChange = slopeBefore - slopeNow;
+
+        // Going uphill (positive slope) then flattening or going downhill
+        if (slopeBefore > p.minRampAngle && slopeChange > p.minRampAngle) {
+            // Launch!
+            const launchAngle = Math.min(slopeBefore, 0.7);
+            const launchPower = speed * p.rampLaunchMultiplier;
+
+            this.surfaceAttached = false;
+            this.isGrounded = false;
+            this.localVelocity.y = launchPower * Math.sin(launchAngle);
+            this.localVelocity.x *= Math.cos(launchAngle);
+
+            kartLog.info('Ramp launch', { angle: launchAngle, power: this.localVelocity.y, speed });
+        }
+    }
+
+    processSteeringInput(input, dt, effectiveMaxSpeed) {
+        const p = CONFIG.physics;
+
+        // Raw steering input
+        let targetSteering = 0;
+        if (input.left) targetSteering = 1;
+        if (input.right) targetSteering = -1;
+
+        // Fast, responsive steering lerp
+        const lerpFactor = 1 - Math.exp(-p.steeringLerpSpeed * dt);
+        this.steeringInput = THREE.MathUtils.lerp(this.steeringInput, targetSteering, lerpFactor);
+
+        // Speed-dependent steering reduction
+        const speed = Math.abs(this.forwardSpeed);
+        let steeringFactor = 1.0;
+        if (speed > 5) {
+            const speedRatio = Math.min(speed / effectiveMaxSpeed, 1.0);
+            steeringFactor = 1.0 - (speedRatio * p.speedSteeringReduction);
+        }
+
+        // Air control reduction
+        if (!this.isGrounded) {
+            steeringFactor *= p.airControl;
+        }
+
+        this.steeringAngle = this.steeringInput * p.maxSteeringAngle * steeringFactor;
+    }
+
+    processAcceleration(input, dt, forward, mod, effectiveMaxSpeed) {
+        const p = CONFIG.physics;
+
+        // Acceleration curve - stronger at low speed
+        const getAccelCurve = (speed) => {
+            const ratio = Math.abs(speed) / effectiveMaxSpeed;
+            return 1.0 - (ratio * ratio * 0.7);
+        };
+
+        if (input.forward && this.forwardSpeed < effectiveMaxSpeed) {
+            const accelMultiplier = getAccelCurve(this.forwardSpeed);
+            const accelForce = p.accelerationForce * mod.acceleration * accelMultiplier * dt;
+            this.velocity.addScaledVector(forward, accelForce);
+        } else if (input.backward) {
+            if (this.forwardSpeed > 5) {
+                // Braking
+                this.velocity.addScaledVector(forward, -p.brakeForce * dt);
+            } else {
+                // Reverse
+                const reverseForce = p.accelerationForce * 0.6 * dt;
+                this.velocity.addScaledVector(forward, -reverseForce);
+                // Clamp reverse speed
+                if (this.forwardSpeed < -p.reverseMaxSpeed) {
+                    this.velocity.copy(forward).multiplyScalar(-p.reverseMaxSpeed);
+                }
+            }
+        } else if (this.forwardSpeed > 0 && this.isGrounded) {
+            // Coast deceleration
+            this.velocity.addScaledVector(forward, -p.coastDeceleration * dt);
+            if (this.forwardSpeed < 0) this.velocity.set(0, 0, 0);
+        }
+    }
+
+    updateDriftState(input, dt, right) {
+        const p = CONFIG.physics;
+        const speed = Math.abs(this.forwardSpeed);
+
+        switch (this.driftState) {
+            case 'NONE':
+                // Check for drift initiation: drift button + steering + speed
+                if (input.drift && speed > p.driftEntrySpeed && Math.abs(this.steeringInput) > 0.5) {
+                    this.driftState = 'INITIATING';
+                    this.driftDirection = Math.sign(this.steeringInput);
+                    this.driftAngle = 0;
+                    this.driftTime = 0;
+                    this.driftBoostLevel = 0;
+                    kartLog.debug('Drift initiating', { direction: this.driftDirection, speed });
+                }
+                break;
+
+            case 'INITIATING':
+                // Build up drift angle
+                this.driftAngle += this.driftDirection * 0.4 * dt * 5;
+                this.driftAngle = THREE.MathUtils.clamp(this.driftAngle, -Math.PI * 0.5, Math.PI * 0.5);
+
+                // Transition to full drift
+                if (Math.abs(this.driftAngle) > 0.3) {
+                    this.driftState = 'DRIFTING';
+                    kartLog.debug('Drift active', { driftAngle: this.driftAngle });
+                }
+
+                // Cancel if drift released early
+                if (!input.drift) {
+                    this.driftState = 'EXITING';
+                }
+                break;
+
+            case 'DRIFTING':
+                this.driftTime += dt;
+                const tp = p.trackPhysics;
+
+                // Charge boost based on drift time
+                for (let i = 0; i < p.driftBoostLevels.length; i++) {
+                    if (this.driftTime >= p.driftBoostLevels[i]) {
+                        this.driftBoostLevel = i + 1;
+                    }
+                }
+
+                // Counter-steering affects drift angle
+                const counterSteer = -this.steeringInput * this.driftDirection;
+                if (counterSteer > 0) {
+                    // Active countersteer: tighten drift
+                    this.driftAngle -= counterSteer * p.driftCounterSteer * dt;
+                } else {
+                    // Steer into drift: widen drift angle
+                    this.driftAngle += Math.abs(this.steeringInput) * p.driftCounterSteer * dt * 0.5;
+                }
+
+                // R4-style yaw damping: prevents oscillation, makes drift stable
+                this.driftAngle *= (1 - tp.driftYawDamping * dt);
+
+                // R4-style subtle countersteer assist at extreme angles
+                if (Math.abs(this.driftAngle) > 0.5) {
+                    const assistForce = -Math.sign(this.driftAngle) * tp.driftCountersteerAssist;
+                    this.driftAngle += assistForce * dt;
+                }
+
+                // Maintain minimum drift angle
+                const minAngle = 0.15;
+                const maxAngle = Math.PI * 0.45;
+                if (Math.abs(this.driftAngle) < minAngle) {
+                    this.driftAngle = minAngle * this.driftDirection;
+                }
+
+                // Clamp drift angle
+                this.driftAngle = THREE.MathUtils.clamp(this.driftAngle, -maxAngle, maxAngle);
+
+                // Only apply world-space drift physics if using legacy system
+                if (right) {
+                    const lateralGripForce = -this.lateralSpeed * p.gripCoefficient * p.driftGripMultiplier;
+                    this.velocity.addScaledVector(right, lateralGripForce * dt);
+                }
+
+                // Exit conditions
+                if (!input.drift || speed < p.driftEntrySpeed * 0.4) {
+                    this.driftState = 'EXITING';
+                }
+                break;
+
+            case 'EXITING':
+                // Apply boost if earned
+                if (this.driftBoostLevel > 0) {
+                    const level = this.driftBoostLevel - 1;
+                    this.boostPower = p.driftBoostPower[level];
+                    this.boostTimeRemaining = p.driftBoostDuration[level];
+                    kartLog.info('Drift boost activated', {
+                        level: this.driftBoostLevel,
+                        power: this.boostPower,
+                        duration: this.boostTimeRemaining
+                    });
+                }
+
+                // Reset drift state
+                this.driftState = 'NONE';
+                this.driftDirection = 0;
+                this.driftAngle = 0;
+                this.driftTime = 0;
+                this.driftBoostLevel = 0;
+                break;
+        }
+    }
+
+    applyTractionModel(dt, forward, right, effectiveMaxSpeed) {
+        const p = CONFIG.physics;
+
+        if (!this.isGrounded) {
+            // Reduced turning in air
+            const turnDir = this.forwardSpeed >= 0 ? 1 : -1;
+            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * p.airControl * turnDir;
+        } else if (Math.abs(this.forwardSpeed) > 5) {
+            // Ground turning - arcade style
+            const turnDir = this.forwardSpeed > 0 ? 1 : -1;
+            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * turnDir;
+
+            // Apply lateral grip (not during drift)
+            if (this.driftState !== 'DRIFTING' && this.driftState !== 'INITIATING') {
+                const lateralGripForce = -this.lateralSpeed * p.gripCoefficient;
+                this.velocity.addScaledVector(right, lateralGripForce * dt);
+            }
+        } else {
+            this.angularVelocity = 0;
+        }
+
+        // Update rotation
+        this.rotation += this.angularVelocity * dt;
+    }
+
+    updateBoost(dt, forward) {
+        if (this.boostTimeRemaining > 0) {
+            this.boostTimeRemaining -= dt;
+
+            // Apply boost acceleration
+            const boostAccel = 200 * dt * (this.boostPower / CONFIG.physics.driftBoostPower[2]);
+            this.velocity.addScaledVector(forward, boostAccel);
+        } else {
+            this.boostPower = 0;
+        }
+    }
+
+    applyGroundPhysics(groundHeight, groundNormal, dt) {
+        const p = CONFIG.physics;
+
+        // Store previous ground normal for ramp detection
+        this.previousGroundNormal.copy(this.groundNormal);
+
+        const currentHeight = this.position.y;
+        const penetration = groundHeight - currentHeight;
+
+        // Spring-damper suspension
+        const springForce = p.groundSpringStiffness * penetration;
+        const dampingForce = -p.groundSpringDamping * this.verticalVelocity;
+        const totalForce = springForce + dampingForce;
+
+        this.verticalVelocity += totalForce * dt;
+
+        // Check grounded state
+        if (penetration > -0.3 && this.verticalVelocity <= 0) {
+            this.isGrounded = true;
+            this.groundNormal.copy(groundNormal);
+
+            // Snap to ground if very close
+            if (penetration > -0.1 && Math.abs(this.verticalVelocity) < 2) {
+                this.position.y = groundHeight;
+                this.verticalVelocity = 0;
+            }
+        }
+
+        // Check for ramp launch
+        this.checkRampLaunch(groundNormal);
+    }
+
+    applyGravity(dt) {
+        const p = CONFIG.physics;
+
+        if (!this.isGrounded) {
+            this.verticalVelocity -= p.gravity * dt;
+            this.verticalVelocity = Math.max(this.verticalVelocity, -p.terminalVelocity);
+        }
+
+        this.position.y += this.verticalVelocity * dt;
+    }
+
+    checkRampLaunch(currentNormal) {
+        const p = CONFIG.physics;
+
+        if (!this.isGrounded) return;
+        if (Math.abs(this.forwardSpeed) < p.rampSpeedThreshold) return;
+
+        // Calculate slope angles
+        const prevAngle = Math.acos(THREE.MathUtils.clamp(this.previousGroundNormal.y, -1, 1));
+        const currAngle = Math.acos(THREE.MathUtils.clamp(currentNormal.y, -1, 1));
+        const angleChange = prevAngle - currAngle;
+
+        // Check if going uphill and leaving a ramp
+        const forward = new THREE.Vector3(Math.sin(this.rotation), 0, Math.cos(this.rotation));
+        const slopeDir = new THREE.Vector3(this.previousGroundNormal.x, 0, this.previousGroundNormal.z).normalize();
+        const goingUphill = forward.dot(slopeDir) < -0.3;
+
+        if (angleChange > p.minRampAngle && goingUphill && currAngle < prevAngle * 0.5) {
+            // Launch!
+            const effectiveAngle = Math.min(prevAngle, 0.7);
+            const launchPower = Math.abs(this.forwardSpeed) * p.rampLaunchMultiplier;
+
+            this.verticalVelocity = launchPower * Math.sin(effectiveAngle);
+            this.isGrounded = false;
+
+            kartLog.info('Ramp launch', { launchVelocity: this.verticalVelocity, speed: this.forwardSpeed });
+        }
+    }
+
+    applyCollision(normal, penetration) {
+        const p = CONFIG.physics;
+
+        // Push out of wall
+        this.position.addScaledVector(normal, penetration + 0.1);
+
+        // Calculate velocity direction
+        const velocityDir = new THREE.Vector3(Math.sin(this.rotation), 0, Math.cos(this.rotation));
+
+        // Dot product to determine impact angle
+        const impactAngle = velocityDir.dot(normal);
+
+        if (impactAngle > p.glanceAngleThreshold) {
+            return; // Moving away from wall
+        }
+
+        const speed = Math.abs(this.forwardSpeed);
+        const impactSeverity = Math.abs(impactAngle);
+
+        if (speed > p.minBounceSpeed && impactSeverity > 0.5) {
+            // Significant impact - apply bounce
+            const reflection = velocityDir.clone().sub(normal.clone().multiplyScalar(2 * impactAngle));
+            this.rotation = Math.atan2(reflection.x, reflection.z);
+
+            // Apply speed loss with bounce
+            const speedLoss = p.wallSpeedLoss * (1 - impactSeverity * (1 - p.wallBounce));
+            this.velocity.multiplyScalar(speedLoss);
+
+            kartLog.debug('Wall bounce', { impactAngle, speedLoss });
+        } else {
+            // Glancing hit - slide along wall
+            const slideDir = velocityDir.clone().sub(normal.clone().multiplyScalar(impactAngle)).normalize();
+            if (slideDir.length() > 0.1) {
+                this.rotation = Math.atan2(slideDir.x, slideDir.z);
+            }
+            this.velocity.multiplyScalar(p.wallSpeedLoss + (1 - p.wallSpeedLoss) * (1 - impactSeverity));
+        }
+    }
+
+    updateVisuals(input, dt) {
+        // Update mesh position
+        this.mesh.position.copy(this.position);
+
+        // Calculate visual yaw (add drift angle during drift)
+        let visualYaw = this.rotation;
+        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
+            visualYaw += this.driftAngle * 0.7;
+        }
+
+        // Update orientation with pitch and roll (uses KartVisuals)
+        KartVisuals.updateOrientation(this, dt);
+
+        this.mesh.rotation.order = 'YXZ';
+        this.mesh.rotation.y = visualYaw;
+        this.mesh.rotation.x = this.pitch;
+        this.mesh.rotation.z = this.roll;
+
+        // Animate wheels and particles (uses KartVisuals)
+        KartVisuals.updateWheelVisuals(this, dt);
+        KartVisuals.updateDriftParticles(this.driftParticles, this, dt);
+        KartVisuals.updateSparkParticles(this.sparkParticles, this, dt);
+        KartVisuals.updateBoostFlame(this.boostFlame, this, dt);
+    }
+
+    reset(position, rotation) {
+        this.position.copy(position);
+        this.rotation = rotation;
+        this.velocity.set(0, 0, 0);
+        this.verticalVelocity = 0;
+        this.angularVelocity = 0;
+        this.steeringInput = 0;
+        this.steeringAngle = 0;
+        this.isGrounded = true;
+        this.groundNormal.set(0, 1, 0);
+        this.previousGroundNormal.set(0, 1, 0);
+
+        // Track-relative physics state
+        this.trackFrame = new TrackFrame();
+        this.previousTrackFrame = null;
+        this.lastTrackT = 0;
+        this.localVelocity.set(0, 0, 0);
+        this.surfaceAttached = true;
+        this.airTime = 0;
+
+        this.driftState = 'NONE';
+        this.driftDirection = 0;
+        this.driftAngle = 0;
+        this.driftTime = 0;
+        this.driftBoostLevel = 0;
+        this.boostTimeRemaining = 0;
+        this.boostPower = 0;
+        this.pitch = 0;
+        this.roll = 0;
+        this.speed = 0;
+        this.forwardSpeed = 0;
+        this.lateralSpeed = 0;
+        this.isDrifting = false;
+        this.mesh.position.copy(position);
+        this.mesh.rotation.set(0, rotation, 0);
+    }
+
+    dispose() {
+        this.mesh.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        });
+        this.mesh.parent?.remove(this.mesh);
+
+        // Clean up visual effects (uses KartVisuals)
+        KartVisuals.disposeVisuals(this);
+    }
+}
+
+export default Kart;

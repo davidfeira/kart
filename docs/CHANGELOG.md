@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-01
+
+### Added
+- **Mobile touch controls** - Full touch support for phone gameplay
+  - Steering buttons (left/right)
+  - Gas/brake pedals
+  - Drift button
+  - Pause button
+- **Landscape mode enforcement** - Rotate overlay prompts portrait users
+- **Dev mode logging** - `devmode.bat` launches server for physics debugging
+  - Logs written to `logs/` folder via Node.js server
+  - Heavy physics logging for debugging drift mechanics
+
+### Changed
+- **Complete code modularization** ("refuckulation")
+  - index.html reduced from 3,389 lines to 141 lines (96% reduction!)
+  - All game code extracted to ES modules in `src/`
+  - Proper separation of concerns across 14 module files
+- Slowed down kart speed for better mobile control
+- Menu layout improved for mobile visibility
+
+### Module Structure (New)
+```
+src/
+├── core/
+│   ├── Game.js          (295 lines) - Main game loop, state management
+│   ├── CameraController.js (91 lines) - Third-person camera
+│   └── TrackFrame.js    (35 lines) - TNB coordinate system
+├── entities/
+│   ├── Kart.js          (1200 lines) - Full kart with physics/visuals
+│   ├── KartFactory.js   (95 lines) - Kart mesh builder
+│   └── kartTypes.js     (40 lines) - Kart definitions
+├── systems/
+│   ├── InputManager.js  (146 lines) - Keyboard + touch input
+│   └── CheckpointManager.js (86 lines) - Lap/timing
+├── tracks/
+│   ├── TrackGenerator.js (530 lines) - Track geometry + collisions
+│   └── trackPresets.js  (90 lines) - Track definitions
+├── ui/
+│   ├── MenuManager.js   (310 lines) - All menus
+│   └── HUDController.js (70 lines) - Speed/lap/timer display
+└── utils/
+    ├── logger.js        (298 lines) - Centralized logging
+    └── config.js        (80 lines) - Physics/camera config
+```
+
 ## [0.4.0] - 2026-01-31
 
 ### Added

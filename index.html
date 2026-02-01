@@ -1059,6 +1059,7 @@ class MenuManager {
     setupKartSelect() {
         const container = document.getElementById('kart-options');
         container.innerHTML = '';
+        this.kartPreviews = [];
 
         Object.entries(KART_TYPES).forEach(([key, config]) => {
             const card = document.createElement('div');
@@ -1098,6 +1099,62 @@ class MenuManager {
 
             container.appendChild(card);
         });
+
+        // Create 3D previews after DOM is ready
+        setTimeout(() => this.createKartPreviews(), 50);
+    }
+
+    createKartPreviews() {
+        Object.keys(KART_TYPES).forEach(key => {
+            const container = document.getElementById(`kart-preview-${key}`);
+            if (!container) return;
+
+            // Create mini renderer
+            const width = 150;
+            const height = 100;
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // Create scene
+            const scene = new THREE.Scene();
+
+            // Camera
+            const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100);
+            camera.position.set(3, 2, 3);
+            camera.lookAt(0, 0.3, 0);
+
+            // Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+
+            const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+            directional.position.set(5, 5, 5);
+            scene.add(directional);
+
+            // Add kart
+            const kart = createKartGeometry(key);
+            kart.scale.set(0.8, 0.8, 0.8);
+            scene.add(kart);
+
+            this.kartPreviews.push({ renderer, scene, camera, kart });
+        });
+
+        // Start preview animation
+        this.animateKartPreviews();
+    }
+
+    animateKartPreviews() {
+        if (!this.kartPreviews || this.kartPreviews.length === 0) return;
+
+        this.kartPreviews.forEach(preview => {
+            preview.kart.rotation.y += 0.01;
+            preview.renderer.render(preview.scene, preview.camera);
+        });
+
+        requestAnimationFrame(() => this.animateKartPreviews());
     }
 
     setupTrackSelect() {

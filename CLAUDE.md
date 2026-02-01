@@ -15,9 +15,12 @@
 - When splitting files, ensure clear naming that reflects the module's purpose
 
 ### Directory Structure
+
+**Current state:** All game code is in `index.html` (~2750 lines). The structure below is the TARGET for future modularization.
+
 ```
 mario-kart-clone/
-├── src/
+├── src/                # TARGET: Future modular structure
 │   ├── core/           # Engine, game loop, scene management
 │   ├── entities/       # Karts, items, obstacles
 │   ├── systems/        # Physics, collision, input handling
@@ -27,7 +30,7 @@ mario-kart-clone/
 ├── assets/             # Models, textures, audio
 ├── docs/               # Project documentation (keep updated!)
 ├── logs/               # Centralized logging output
-├── index.html
+├── index.html          # CURRENT: All game code lives here
 ├── style.css
 └── CLAUDE.md
 ```
@@ -38,7 +41,7 @@ mario-kart-clone/
 All logs go to the `logs/` folder. Do not log to console in production code.
 
 ### Logger Module
-Create/use a centralized logger (`src/utils/logger.js`) that:
+The logger is currently embedded in `index.html`. Future: extract to `src/utils/logger.js`. It should:
 - Writes to files in `logs/` directory
 - Includes timestamps
 - Includes source file/module name

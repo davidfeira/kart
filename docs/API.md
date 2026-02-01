@@ -295,6 +295,15 @@ KART_TYPES = {
 TRACK_PRESETS = {
     oval: { name, description, difficulty, generatePath() },
     figure8: { ... },
-    grand: { ... }
+    grand: { ... },
+    drift: { ... }  // R4-inspired high-speed drift track
 };
 ```
+
+**Track characteristics:**
+| Track | Turn Radii | Elevation | Style |
+|-------|-----------|-----------|-------|
+| Oval | N/A (ellipse) | Flat | High-speed oval |
+| Figure 8 | ~30 units | Bridge crossing | Intermediate |
+| Grand Circuit | ~25-40 units | 0-5 units | Technical |
+| Drift Circuit | ~86-174 units | 0-6 units | Sweeping curves, floating |

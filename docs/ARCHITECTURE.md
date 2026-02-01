@@ -2,7 +2,7 @@
 
 ## Current Implementation Status
 
-The game is currently implemented as a **single-file application** in `index.html` (~1650 lines). This document describes both the current architecture and the planned modular structure outlined in [CLAUDE.md](../CLAUDE.md).
+The game is currently implemented as a **single-file application** in `index.html` (~2750 lines). This document describes both the current architecture and the planned modular structure outlined in [CLAUDE.md](../CLAUDE.md).
 
 ## System Diagram
 
@@ -36,24 +36,32 @@ The game is currently implemented as a **single-file application** in `index.htm
 ### Configuration
 - **CONFIG** - Physics, camera, and race settings
 - **KART_TYPES** - Speedster, Tank, Dart, Buggy definitions
-- **TRACK_PRESETS** - Oval, Figure 8, Grand Circuit definitions
+- **TRACK_PRESETS** - Oval, Figure 8, Grand Circuit, Drift Circuit definitions
 
 ### Core Classes
 
 | Class | Lines | Responsibility |
 |-------|-------|----------------|
-| `InputManager` | ~65 | Keyboard input capture and state |
-| `Kart` | ~245 | Kart mesh, physics, drift mechanics |
-| `TrackGenerator` | ~355 | Procedural track geometry and textures |
-| `CheckpointManager` | ~65 | Lap counting and race timing |
-| `CameraController` | ~60 | Third-person camera with look-ahead |
-| `MenuManager` | ~325 | All menu screens and navigation |
-| `HUDController` | ~40 | Speed, lap, timer display |
-| `Game` | ~240 | Main orchestrator, game loop |
+| `InputManager` | ~70 | Keyboard input capture and state |
+| `Kart` | ~400 | Kart mesh, physics, drift mechanics, particles |
+| `TrackGenerator` | ~450 | Track geometry, barriers, stadium lights, banking |
+| `CheckpointManager` | ~80 | Lap counting and race timing |
+| `CameraController` | ~75 | Third-person camera with look-ahead, shake |
+| `MenuManager` | ~350 | All menu screens and navigation |
+| `HUDController` | ~50 | Speed, lap, timer, drift indicator display |
+| `Game` | ~300 | Main orchestrator, game loop, sky shader |
 
 ### Static Utilities
 - `KartFactory.createMesh()` - Procedural kart geometry builder
 - `KartFactory.createPreview()` - Menu preview kart creator
+
+### Visual Systems
+- **Skybox** - Custom shader with blue gradient (follows camera)
+- **Drift particles** - Smoke trails from rear wheels during drift
+- **Spark particles** - Orange/yellow sparks when charging boost
+- **Boost flame** - Cone mesh on kart rear during boost
+- **Stadium lights** - Pole + emissive fixture around track perimeter
+- **Track banking** - Outer edge elevation on curves
 
 ## Game State Flow
 

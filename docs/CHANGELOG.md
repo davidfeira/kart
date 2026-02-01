@@ -6,13 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-31
+
 ### Added
-- Centralized logging system (`src/utils/logger.js`)
+- **Drift Circuit track** - R4-inspired high-speed drift track
+  - Smooth parametric curve (no discrete sections)
+  - 2x scale for wide sweeping turns (~86-174 unit turn radii)
+  - Gentle elevation changes (max ~6 units)
+- **Floating track aesthetic** - removed ground plane
+- **Stadium lights** - poles with emissive light fixtures around track perimeter
+- **Spark particles** - visual feedback when charging drift boost
+- **Track banking** - outer edge raises on curves
+- **Clean skybox shader** - simple blue gradient (zenith to horizon)
+  - Fixed black orb bug (skybox now follows camera)
+
+### Changed
+- Road width doubled from 18 to 36 units
+- Oval track enlarged for high-speed racing (a=150, b=80)
+- Fog color updated to match blue sky (0x8090a0)
+- Camera far plane extended to 600
+
+### Fixed
+- Skybox clipping causing black circle artifact
+- Inverted steering controls
+
+## [0.3.0] - 2026-01-31
+
+### Added
+- Centralized logging system (embedded in index.html)
   - Support for log levels: DEBUG, INFO, WARN, ERROR
   - Log categories: game, physics, network, error
-  - localStorage persistence with auto-restore
-  - Log export and download functionality
-  - Batched writes for performance
 - API documentation (`docs/API.md`)
 - Updated architecture documentation
 

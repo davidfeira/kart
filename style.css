@@ -535,6 +535,123 @@ body {
     height: 100%;
 }
 
+/* ============= MOBILE TOUCH CONTROLS ============= */
+.touch-controls {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 60;
+    pointer-events: none;
+}
+
+.touch-controls.hidden {
+    display: none;
+}
+
+.joystick-zone {
+    position: absolute;
+    left: 20px;
+    bottom: 20px;
+    width: 180px;
+    height: 180px;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.joystick-base {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 140px;
+    height: 140px;
+    background: radial-gradient(circle, rgba(0,255,255,0.15) 0%, rgba(0,100,150,0.25) 100%);
+    border: 3px solid rgba(0,255,255,0.5);
+    border-radius: 50%;
+    box-shadow: 0 0 20px rgba(0,255,255,0.3), inset 0 0 30px rgba(0,0,0,0.3);
+}
+
+.joystick-thumb {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 60px;
+    height: 60px;
+    background: radial-gradient(circle, rgba(0,255,255,0.8) 0%, rgba(0,150,200,0.9) 100%);
+    border: 2px solid #0ff;
+    border-radius: 50%;
+    box-shadow: 0 0 15px rgba(0,255,255,0.6);
+    transition: box-shadow 0.1s ease;
+}
+
+.joystick-thumb.active {
+    box-shadow: 0 0 25px rgba(0,255,255,0.9);
+}
+
+.touch-buttons {
+    position: absolute;
+    right: 20px;
+    bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    pointer-events: auto;
+}
+
+.touch-btn {
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    border: 3px solid;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.touch-btn:active {
+    transform: scale(0.95);
+}
+
+.drift-btn {
+    background: radial-gradient(circle, rgba(255,0,255,0.3) 0%, rgba(150,0,150,0.4) 100%);
+    border-color: rgba(255,0,255,0.7);
+    color: #f0f;
+    text-shadow: 0 0 10px #f0f;
+    box-shadow: 0 0 20px rgba(255,0,255,0.4);
+}
+
+.drift-btn.active {
+    background: radial-gradient(circle, rgba(255,0,255,0.6) 0%, rgba(200,0,200,0.7) 100%);
+    box-shadow: 0 0 30px rgba(255,0,255,0.7);
+}
+
+.pause-btn {
+    width: 50px;
+    height: 50px;
+    font-size: 1.2rem;
+    background: radial-gradient(circle, rgba(255,255,0,0.2) 0%, rgba(150,150,0,0.3) 100%);
+    border-color: rgba(255,255,0,0.5);
+    color: #ff0;
+    text-shadow: 0 0 5px #ff0;
+    box-shadow: 0 0 10px rgba(255,255,0,0.3);
+    align-self: flex-end;
+}
+
+/* Hide touch controls on non-touch devices by default */
+@media (hover: hover) and (pointer: fine) {
+    .touch-controls {
+        display: none !important;
+    }
+}
+
 /* ============= RESPONSIVE ============= */
 @media (max-width: 768px) {
     .menu-title {
@@ -552,5 +669,13 @@ body {
 
     .hud-speed {
         font-size: 2rem;
+    }
+
+    .controls-hint {
+        display: none;
+    }
+
+    .hud-bottom {
+        bottom: 120px;
     }
 }

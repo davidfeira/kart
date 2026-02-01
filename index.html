@@ -836,9 +836,12 @@ class TrackGenerator {
         let minDist = Infinity;
         let closestT = 0;
 
+        // Use 2D distance (XZ plane) for finding closest point
         for (let t = 0; t < 1; t += 0.01) {
             const point = this.trackPath.getPointAt(t);
-            const dist = position.distanceTo(point);
+            const dx = position.x - point.x;
+            const dz = position.z - point.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
             if (dist < minDist) {
                 minDist = dist;
                 closest = point;
@@ -847,6 +850,11 @@ class TrackGenerator {
         }
 
         return { point: closest, t: closestT, distance: minDist };
+    }
+
+    getTrackHeightAt(position) {
+        const result = this.getClosestPointOnTrack(position);
+        return result.point ? result.point.y : 0;
     }
 
     isOnTrack(position) {
@@ -859,20 +867,23 @@ class TrackGenerator {
         const halfWidth = this.trackWidth / 2;
 
         if (result.distance > halfWidth - radius) {
-            // Calculate push direction (towards center of track)
-            const toCenter = new THREE.Vector3()
-                .subVectors(result.point, position)
-                .normalize();
+            // Calculate push direction in XZ plane (towards center of track)
+            const toCenter = new THREE.Vector3(
+                result.point.x - position.x,
+                0,
+                result.point.z - position.z
+            ).normalize();
 
             const penetration = result.distance - (halfWidth - radius);
             return {
                 collision: true,
                 normal: toCenter,
-                penetration: penetration
+                penetration: penetration,
+                trackHeight: result.point.y
             };
         }
 
-        return { collision: false };
+        return { collision: false, trackHeight: result.point ? result.point.y : 0 };
     }
 
     clear() {
@@ -1518,11 +1529,16 @@ class Game {
         // Update kart physics
         this.kart.update(this.input.keys, delta);
 
-        // Check track boundaries
+        // Check track boundaries and get track height
         const collision = this.trackGenerator.getTrackBoundaryCollision(
             this.kart.position,
             this.kart.boundingRadius
         );
+
+        // Update kart Y position to follow track height
+        const targetY = collision.trackHeight || this.trackGenerator.getTrackHeightAt(this.kart.position);
+        this.kart.position.y += (targetY - this.kart.position.y) * 0.2; // Smooth transition
+        this.kart.mesh.position.y = this.kart.position.y;
 
         if (collision.collision) {
             this.kart.applyCollision(collision.normal, collision.penetration);

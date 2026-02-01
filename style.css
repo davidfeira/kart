@@ -267,6 +267,10 @@ body {
     pointer-events: none;
 }
 
+.countdown-overlay.hidden {
+    display: none;
+}
+
 .countdown-number {
     font-size: 15rem;
     font-weight: 900;

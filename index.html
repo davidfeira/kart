@@ -104,15 +104,16 @@
 
     <!-- Mobile Touch Controls -->
     <div id="touch-controls" class="touch-controls hidden">
-        <div id="joystick-zone" class="joystick-zone">
-            <div id="joystick-base" class="joystick-base">
-                <div id="joystick-thumb" class="joystick-thumb"></div>
-            </div>
+        <div class="steering-buttons">
+            <button id="left-btn" class="touch-btn steer-btn">◀</button>
+            <button id="right-btn" class="touch-btn steer-btn">▶</button>
         </div>
-        <div id="touch-buttons" class="touch-buttons">
-            <button id="drift-btn" class="touch-btn drift-btn">DRIFT</button>
-            <button id="pause-btn" class="touch-btn pause-btn">❚❚</button>
+        <div class="pedal-buttons">
+            <button id="gas-btn" class="touch-btn gas-btn">GO</button>
+            <button id="brake-btn" class="touch-btn brake-btn">REV</button>
         </div>
+        <button id="drift-btn" class="touch-btn drift-btn-new">DRIFT</button>
+        <button id="pause-btn" class="touch-btn pause-btn-mobile">❚❚</button>
     </div>
 
     <script type="importmap">
@@ -400,8 +401,6 @@ class InputManager {
 
         // Touch state
         this.isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        this.joystickActive = false;
-        this.joystickVector = { x: 0, y: 0 };
 
         window.addEventListener('keydown', (e) => this.onKeyDown(e));
         window.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -414,97 +413,42 @@ class InputManager {
     }
 
     initTouchControls() {
-        const joystickZone = document.getElementById('joystick-zone');
-        const joystickBase = document.getElementById('joystick-base');
-        const joystickThumb = document.getElementById('joystick-thumb');
-        const driftBtn = document.getElementById('drift-btn');
-        const pauseBtn = document.getElementById('pause-btn');
+        // Helper to setup a button
+        const setupButton = (id, keyName, activeClass = 'active') => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
 
-        if (!joystickZone) return;
-
-        const baseRect = () => joystickBase.getBoundingClientRect();
-        const maxDist = 45; // Max thumb movement from center
-
-        const updateJoystick = (clientX, clientY) => {
-            const rect = baseRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-
-            let dx = clientX - centerX;
-            let dy = clientY - centerY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-
-            if (dist > maxDist) {
-                dx = (dx / dist) * maxDist;
-                dy = (dy / dist) * maxDist;
-            }
-
-            joystickThumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-
-            // Normalize to -1 to 1
-            this.joystickVector.x = dx / maxDist;
-            this.joystickVector.y = dy / maxDist;
-
-            // Update keys based on joystick position
-            const threshold = 0.2;
-            this.keys.left = this.joystickVector.x < -threshold;
-            this.keys.right = this.joystickVector.x > threshold;
-            this.keys.forward = this.joystickVector.y < -threshold;
-            this.keys.backward = this.joystickVector.y > threshold;
-        };
-
-        const resetJoystick = () => {
-            this.joystickActive = false;
-            joystickThumb.style.transform = 'translate(-50%, -50%)';
-            joystickThumb.classList.remove('active');
-            this.joystickVector = { x: 0, y: 0 };
-            this.keys.forward = false;
-            this.keys.backward = false;
-            this.keys.left = false;
-            this.keys.right = false;
-        };
-
-        // Touch events for joystick
-        joystickZone.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            this.joystickActive = true;
-            joystickThumb.classList.add('active');
-            const touch = e.touches[0];
-            updateJoystick(touch.clientX, touch.clientY);
-        }, { passive: false });
-
-        joystickZone.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            if (this.joystickActive) {
-                const touch = e.touches[0];
-                updateJoystick(touch.clientX, touch.clientY);
-            }
-        }, { passive: false });
-
-        joystickZone.addEventListener('touchend', resetJoystick);
-        joystickZone.addEventListener('touchcancel', resetJoystick);
-
-        // Drift button
-        if (driftBtn) {
-            driftBtn.addEventListener('touchstart', (e) => {
+            btn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                this.keys.drift = true;
-                driftBtn.classList.add('active');
+                this.keys[keyName] = true;
+                btn.classList.add(activeClass);
             }, { passive: false });
 
-            driftBtn.addEventListener('touchend', (e) => {
+            btn.addEventListener('touchend', (e) => {
                 e.preventDefault();
-                this.keys.drift = false;
-                driftBtn.classList.remove('active');
+                this.keys[keyName] = false;
+                btn.classList.remove(activeClass);
             });
 
-            driftBtn.addEventListener('touchcancel', () => {
-                this.keys.drift = false;
-                driftBtn.classList.remove('active');
+            btn.addEventListener('touchcancel', () => {
+                this.keys[keyName] = false;
+                btn.classList.remove(activeClass);
             });
-        }
+        };
 
-        // Pause button
+        // Steering buttons
+        setupButton('left-btn', 'left');
+        setupButton('right-btn', 'right');
+
+        // Pedal buttons
+        setupButton('gas-btn', 'forward');
+        setupButton('brake-btn', 'backward');
+
+        // Drift button
+        setupButton('drift-btn', 'drift');
+
+        // Pause button (special handling)
+        const pauseBtn = document.getElementById('pause-btn');
         if (pauseBtn) {
             pauseBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();

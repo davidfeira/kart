@@ -92,6 +92,19 @@
         </div>
     </div>
 
+    <!-- Mobile Touch Controls -->
+    <div id="touch-controls" class="touch-controls hidden">
+        <div id="joystick-zone" class="joystick-zone">
+            <div id="joystick-base" class="joystick-base">
+                <div id="joystick-thumb" class="joystick-thumb"></div>
+            </div>
+        </div>
+        <div id="touch-buttons" class="touch-buttons">
+            <button id="drift-btn" class="touch-btn drift-btn">DRIFT</button>
+            <button id="pause-btn" class="touch-btn pause-btn">❚❚</button>
+        </div>
+    </div>
+
     <script type="importmap">
     {
         "imports": {
@@ -375,10 +388,135 @@ class InputManager {
         this.pausePressed = false;
         this.enterPressed = false;
 
+        // Touch state
+        this.isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        this.joystickActive = false;
+        this.joystickVector = { x: 0, y: 0 };
+
         window.addEventListener('keydown', (e) => this.onKeyDown(e));
         window.addEventListener('keyup', (e) => this.onKeyUp(e));
 
-        inputLog.info('InputManager initialized');
+        if (this.isTouchDevice) {
+            this.initTouchControls();
+        }
+
+        inputLog.info('InputManager initialized', { touch: this.isTouchDevice });
+    }
+
+    initTouchControls() {
+        const joystickZone = document.getElementById('joystick-zone');
+        const joystickBase = document.getElementById('joystick-base');
+        const joystickThumb = document.getElementById('joystick-thumb');
+        const driftBtn = document.getElementById('drift-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+
+        if (!joystickZone) return;
+
+        const baseRect = () => joystickBase.getBoundingClientRect();
+        const maxDist = 45; // Max thumb movement from center
+
+        const updateJoystick = (clientX, clientY) => {
+            const rect = baseRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+
+            let dx = clientX - centerX;
+            let dy = clientY - centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist > maxDist) {
+                dx = (dx / dist) * maxDist;
+                dy = (dy / dist) * maxDist;
+            }
+
+            joystickThumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+            // Normalize to -1 to 1
+            this.joystickVector.x = dx / maxDist;
+            this.joystickVector.y = dy / maxDist;
+
+            // Update keys based on joystick position
+            const threshold = 0.2;
+            this.keys.left = this.joystickVector.x < -threshold;
+            this.keys.right = this.joystickVector.x > threshold;
+            this.keys.forward = this.joystickVector.y < -threshold;
+            this.keys.backward = this.joystickVector.y > threshold;
+        };
+
+        const resetJoystick = () => {
+            this.joystickActive = false;
+            joystickThumb.style.transform = 'translate(-50%, -50%)';
+            joystickThumb.classList.remove('active');
+            this.joystickVector = { x: 0, y: 0 };
+            this.keys.forward = false;
+            this.keys.backward = false;
+            this.keys.left = false;
+            this.keys.right = false;
+        };
+
+        // Touch events for joystick
+        joystickZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            this.joystickActive = true;
+            joystickThumb.classList.add('active');
+            const touch = e.touches[0];
+            updateJoystick(touch.clientX, touch.clientY);
+        }, { passive: false });
+
+        joystickZone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (this.joystickActive) {
+                const touch = e.touches[0];
+                updateJoystick(touch.clientX, touch.clientY);
+            }
+        }, { passive: false });
+
+        joystickZone.addEventListener('touchend', resetJoystick);
+        joystickZone.addEventListener('touchcancel', resetJoystick);
+
+        // Drift button
+        if (driftBtn) {
+            driftBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.keys.drift = true;
+                driftBtn.classList.add('active');
+            }, { passive: false });
+
+            driftBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.keys.drift = false;
+                driftBtn.classList.remove('active');
+            });
+
+            driftBtn.addEventListener('touchcancel', () => {
+                this.keys.drift = false;
+                driftBtn.classList.remove('active');
+            });
+        }
+
+        // Pause button
+        if (pauseBtn) {
+            pauseBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (!this.pausePressed) {
+                    this.keys.pause = true;
+                    this.pausePressed = true;
+                }
+            }, { passive: false });
+
+            pauseBtn.addEventListener('touchend', () => {
+                this.pausePressed = false;
+            });
+        }
+
+        inputLog.info('Touch controls initialized');
+    }
+
+    showTouchControls(visible) {
+        const el = document.getElementById('touch-controls');
+        if (el && this.isTouchDevice) {
+            el.classList.toggle('hidden', !visible);
+        }
     }
 
     onKeyDown(e) {
@@ -2586,6 +2724,7 @@ class Game {
         this.state = 'COUNTDOWN';
         this.menuManager.hideAll();
         this.hud.show();
+        this.input.showTouchControls(true);
         this.hud.update(0, 1, CONFIG.race.totalLaps, 0, false);
 
         await this.menuManager.showCountdown();
@@ -2602,6 +2741,7 @@ class Game {
         this.state = 'RACING';
         this.isPaused = false;
         this.menuManager.hidePause();
+        this.input.showTouchControls(true);
         this.clock.start();
         gameLog.info('Race resumed');
     }
@@ -2625,6 +2765,7 @@ class Game {
 
         this.trackGenerator.clear();
         this.hud.hide();
+        this.input.showTouchControls(false);
         this.menuManager.showScreen('main-menu');
     }
 
@@ -2637,6 +2778,7 @@ class Game {
                 this.state = 'PAUSED';
                 this.isPaused = true;
                 this.menuManager.showPause();
+                this.input.showTouchControls(false);
                 this.clock.stop();
                 gameLog.info('Race paused', { raceTime: this.raceTime });
             } else if (this.state === 'PAUSED') {
@@ -2709,6 +2851,7 @@ class Game {
                     this.checkpointManager.lapTimes
                 );
                 this.hud.hide();
+                this.input.showTouchControls(false);
             }
         }
 

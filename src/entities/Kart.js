@@ -56,6 +56,7 @@ export class Kart {
         this.localVelocity = new THREE.Vector3(); // Velocity in TNB frame
         this.surfaceAttached = true;
         this.airTime = 0;
+        this.timeSinceLastLaunch = 1; // Cooldown for ramp launches
 
         // Steering state
         this.steeringInput = 0;
@@ -116,7 +117,9 @@ export class Kart {
         if (this.isGrounded !== this._lastLoggedGrounded) {
             kartLog.debug(this.isGrounded ? 'Landed' : 'Airborne', {
                 speed: this.forwardSpeed.toFixed(1),
-                vertVel: this.verticalVelocity.toFixed(2)
+                localVelY: this.localVelocity.y.toFixed(2),
+                posY: this.position.y.toFixed(2),
+                trackY: this.trackFrame?.position.y.toFixed(2) || 'N/A'
             });
             this._lastLoggedGrounded = this.isGrounded;
         }
@@ -124,10 +127,11 @@ export class Kart {
         // Log physics state every 60 frames (~1 second at 60fps)
         if (this._logFrameCounter % 60 === 0) {
             kartLog.debug('Physics state', {
-                pos: `${this.position.x.toFixed(1)},${this.position.z.toFixed(1)}`,
+                pos: `${this.position.x.toFixed(1)},${this.position.y.toFixed(1)},${this.position.z.toFixed(1)}`,
                 speed: this.forwardSpeed.toFixed(1),
                 drift: this.driftState,
-                grounded: this.isGrounded
+                attached: this.surfaceAttached,
+                trackT: this.lastTrackT?.toFixed(3) || 'N/A'
             });
         }
 
@@ -147,6 +151,20 @@ export class Kart {
         // Get current track frame (optimized with lastT cache)
         this.trackFrame = trackGenerator.getTrackFrame(this.position, this.lastTrackT);
         this.lastTrackT = this.trackFrame.t;
+
+        // Smooth track frame position Y to prevent sudden jumps from causing detachment
+        // Only when attached and previous frame exists
+        if (this.surfaceAttached && this.previousTrackFrame) {
+            const maxYChangePerSecond = 20; // Max 20 units/sec change in track Y
+            const maxYChange = maxYChangePerSecond * dt;
+            const yDelta = this.trackFrame.position.y - this.previousTrackFrame.position.y;
+
+            if (Math.abs(yDelta) > maxYChange) {
+                // Clamp the track frame Y to prevent sudden jumps
+                this.trackFrame.position.y = this.previousTrackFrame.position.y +
+                    Math.sign(yDelta) * maxYChange;
+            }
+        }
 
         // Project world velocity into local TNB frame
         this.projectVelocityToLocal();
@@ -195,13 +213,28 @@ export class Kart {
         this.projectVelocityToWorld();
 
         // ===== INTEGRATE POSITION =====
+        const prevY = this.position.y;
         this.position.addScaledVector(this.velocity, dt);
+
+        // Clamp maximum Y change per frame to prevent explosions
+        const maxYChangePerFrame = 5; // Max 5 units per frame
+        const yChange = this.position.y - prevY;
+        if (Math.abs(yChange) > maxYChangePerFrame) {
+            this.position.y = prevY + Math.sign(yChange) * maxYChangePerFrame;
+            // Also clamp the velocity that caused this
+            if (Math.abs(this.velocity.y) > maxYChangePerFrame / dt) {
+                this.velocity.y = Math.sign(this.velocity.y) * maxYChangePerFrame / dt;
+            }
+        }
+
+        // ===== SANITY CHECKS - prevent physics explosions =====
+        this.sanitizePhysics();
 
         // ===== SURFACE ATTACHMENT =====
         this.updateSurfaceAttachment(dt);
 
         // ===== RAMP LAUNCH CHECK =====
-        this.checkTrackRampLaunch();
+        this.checkTrackRampLaunch(dt);
 
         // Update derived speed values
         this.forwardSpeed = this.localVelocity.x;
@@ -327,10 +360,12 @@ export class Kart {
         const forward = this.getCarForward();
         const right = this.getCarRight();
 
+        // ALWAYS use world up for velocity projection
+        // Using track normal caused cars to float up/down on banked sections
         this.localVelocity.set(
-            this.velocity.dot(forward),                   // Forward speed (car's heading)
-            this.velocity.dot(this.trackFrame.normal),    // Vertical speed (perpendicular to track surface)
-            this.velocity.dot(right)                      // Lateral speed (car's right)
+            this.velocity.dot(forward),     // Forward speed (car's heading)
+            this.velocity.y,                // Vertical speed (world Y directly)
+            this.velocity.dot(right)        // Lateral speed (car's right)
         );
     }
 
@@ -339,10 +374,50 @@ export class Kart {
         const forward = this.getCarForward();
         const right = this.getCarRight();
 
+        // ALWAYS use world up for velocity - track normal is only for visuals
         this.velocity.set(0, 0, 0);
         this.velocity.addScaledVector(forward, this.localVelocity.x);
-        this.velocity.addScaledVector(this.trackFrame.normal, this.localVelocity.y);
+        this.velocity.y = this.localVelocity.y;  // Direct world Y
         this.velocity.addScaledVector(right, this.localVelocity.z);
+    }
+
+    // Prevent NaN/Infinity from exploding the physics
+    sanitizePhysics() {
+        const maxPos = 1000;  // Max reasonable position from track center
+        const maxVel = 200;   // Max reasonable velocity
+
+        // Check for NaN or Infinity in position
+        if (!Number.isFinite(this.position.x) || !Number.isFinite(this.position.y) || !Number.isFinite(this.position.z)) {
+            kartLog.warn('Position NaN/Infinity detected, resetting');
+            this.position.set(0, 5, 0);
+            this.velocity.set(0, 0, 0);
+            this.localVelocity.set(0, 0, 0);
+            this.surfaceAttached = false;
+            return;
+        }
+
+        // Check for NaN or Infinity in velocity
+        if (!Number.isFinite(this.velocity.x) || !Number.isFinite(this.velocity.y) || !Number.isFinite(this.velocity.z)) {
+            kartLog.warn('Velocity NaN/Infinity detected, resetting velocity');
+            this.velocity.set(0, 0, 0);
+            this.localVelocity.set(0, 0, 0);
+            return;
+        }
+
+        // Clamp extreme positions (likely fell off track)
+        if (Math.abs(this.position.x) > maxPos || Math.abs(this.position.z) > maxPos || this.position.y < -50 || this.position.y > maxPos) {
+            kartLog.warn('Extreme position detected', {
+                pos: `${this.position.x.toFixed(1)},${this.position.y.toFixed(1)},${this.position.z.toFixed(1)}`
+            });
+            // Don't reset automatically - let game handle respawn
+        }
+
+        // Clamp extreme velocities
+        const speed = this.velocity.length();
+        if (speed > maxVel) {
+            this.velocity.multiplyScalar(maxVel / speed);
+            kartLog.debug('Velocity clamped', { originalSpeed: speed.toFixed(1) });
+        }
     }
 
     // Apply gravity in track-relative frame
@@ -363,14 +438,9 @@ export class Kart {
             // No vertical velocity when attached to surface
             this.localVelocity.y = 0;
         } else {
-            // In air: full world gravity, projected into car's local frame
-            const forward = this.getCarForward();
-            const right = this.getCarRight();
-            const worldGravityY = -p.gravity;
-
-            this.localVelocity.x += forward.y * worldGravityY * dt;
-            this.localVelocity.y += this.trackFrame.normal.y * worldGravityY * dt;
-            this.localVelocity.z += right.y * worldGravityY * dt;
+            // In air: use simple world gravity (don't use track frame - it's unreliable when far from track)
+            // Just apply gravity directly to vertical velocity
+            this.localVelocity.y -= p.gravity * dt;
 
             // Terminal velocity
             if (this.localVelocity.y < -p.terminalVelocity) {
@@ -386,22 +456,48 @@ export class Kart {
         // Calculate height above track surface
         const heightAboveTrack = this.position.y - this.trackFrame.position.y;
 
+        // Track previous frame's position.y for detecting sudden jumps
+        const trackYDelta = this.previousTrackFrame
+            ? Math.abs(this.trackFrame.position.y - this.previousTrackFrame.position.y)
+            : 0;
+
         if (this.surfaceAttached) {
             // Currently attached to surface
-            if (heightAboveTrack > tp.attachmentThreshold || this.localVelocity.y > 5) {
+
+            // Only detach if:
+            // 1. Height above track is significant (>0.5m) AND not caused by sudden track Y jump
+            // 2. OR we've been explicitly launched (localVelocity.y > 10, not just 5)
+            const significantHeight = heightAboveTrack > tp.attachmentThreshold && trackYDelta < 0.3;
+            const intentionalLaunch = this.localVelocity.y > 10;
+
+            if (significantHeight || intentionalLaunch) {
                 // Left the surface (ramp, jump, or intentional launch)
                 this.surfaceAttached = false;
                 this.airTime = 0;
                 this.isGrounded = false;
-                kartLog.debug('Left surface', { height: heightAboveTrack, velY: this.localVelocity.y });
+                kartLog.debug('Left surface', {
+                    height: heightAboveTrack.toFixed(2),
+                    velY: this.localVelocity.y.toFixed(2),
+                    trackYDelta: trackYDelta.toFixed(2),
+                    reason: intentionalLaunch ? 'launch' : 'height'
+                });
             } else {
                 // Stay attached: smoothly follow surface
                 const targetY = this.trackFrame.position.y;
+
+                // More aggressive attachment - prevent bouncing
+                const blendSpeed = tp.attachmentBlendSpeed * (1 + Math.abs(heightAboveTrack) * 2);
                 this.position.y = THREE.MathUtils.lerp(
                     this.position.y,
                     targetY,
-                    1 - Math.exp(-tp.attachmentBlendSpeed * dt)
+                    1 - Math.exp(-blendSpeed * dt)
                 );
+
+                // If very close to track, snap directly
+                if (Math.abs(heightAboveTrack) < 0.05) {
+                    this.position.y = targetY;
+                }
+
                 this.isGrounded = true;
             }
         } else {
@@ -416,14 +512,17 @@ export class Kart {
                     // Hard landing: small bounce
                     this.localVelocity.y = impactSpeed * 0.2;
                     this.position.y = this.trackFrame.position.y + 0.1;
-                    kartLog.debug('Hard landing bounce', { impactSpeed });
+                    kartLog.debug('Hard landing bounce', { impactSpeed: impactSpeed.toFixed(1) });
                 } else {
                     // Soft landing: attach to surface
                     this.surfaceAttached = true;
                     this.isGrounded = true;
                     this.localVelocity.y = 0;
                     this.position.y = this.trackFrame.position.y;
-                    kartLog.debug('Landed', { airTime: this.airTime, impactSpeed });
+                    kartLog.debug('Landed', {
+                        airTime: this.airTime.toFixed(2),
+                        impactSpeed: impactSpeed.toFixed(1)
+                    });
                 }
             }
         }
@@ -488,32 +587,53 @@ export class Kart {
     }
 
     // Check for ramp launch using track frame slope change
-    checkTrackRampLaunch() {
+    // Made more conservative to prevent random launches on bumpy tracks
+    checkTrackRampLaunch(dt) {
         const p = CONFIG.physics;
+
+        // Update launch cooldown
+        this.timeSinceLastLaunch += dt;
 
         if (!this.surfaceAttached) return;
         if (!this.previousTrackFrame) return;
 
+        // Cooldown: no launches within 0.5 seconds of last launch
+        if (this.timeSinceLastLaunch < 0.5) return;
+
         const speed = Math.abs(this.localVelocity.x);
-        if (speed < p.rampSpeedThreshold) return;
+        // Higher speed threshold - only launch at high speeds
+        if (speed < p.rampSpeedThreshold * 1.5) return;
 
         // Detect slope discontinuity
         const slopeBefore = this.previousTrackFrame.slope;
         const slopeNow = this.trackFrame.slope;
         const slopeChange = slopeBefore - slopeNow;
 
-        // Going uphill (positive slope) then flattening or going downhill
-        if (slopeBefore > p.minRampAngle && slopeChange > p.minRampAngle) {
+        // Much stricter requirements:
+        // - Need significant uphill slope (> 25 degrees = 0.44 rad)
+        // - Need significant change (slope drops by > 20 degrees)
+        // - Current slope should be much flatter than before
+        const minSlopeForRamp = 0.44; // ~25 degrees (increased from 20)
+        const minSlopeChange = 0.35;  // ~20 degrees change (increased from 15)
+
+        if (slopeBefore > minSlopeForRamp && slopeChange > minSlopeChange && slopeNow < slopeBefore * 0.3) {
             // Launch!
-            const launchAngle = Math.min(slopeBefore, 0.7);
-            const launchPower = speed * p.rampLaunchMultiplier;
+            const launchAngle = Math.min(slopeBefore, 0.5); // Cap at ~30 degrees
+            const launchPower = speed * p.rampLaunchMultiplier * 0.4; // Further reduced power
 
             this.surfaceAttached = false;
             this.isGrounded = false;
             this.localVelocity.y = launchPower * Math.sin(launchAngle);
             this.localVelocity.x *= Math.cos(launchAngle);
+            this.timeSinceLastLaunch = 0; // Reset cooldown
 
-            kartLog.info('Ramp launch', { angle: launchAngle, power: this.localVelocity.y, speed });
+            kartLog.info('Ramp launch', {
+                angle: launchAngle.toFixed(2),
+                power: this.localVelocity.y.toFixed(1),
+                speed: speed.toFixed(1),
+                slopeBefore: slopeBefore.toFixed(2),
+                slopeNow: slopeNow.toFixed(2)
+            });
         }
     }
 
@@ -878,6 +998,7 @@ export class Kart {
         this.localVelocity.set(0, 0, 0);
         this.surfaceAttached = true;
         this.airTime = 0;
+        this.timeSinceLastLaunch = 1;
 
         this.driftState = 'NONE';
         this.driftDirection = 0;

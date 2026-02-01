@@ -323,27 +323,30 @@ export function updateOrientation(kart, dt) {
     if (kart.surfaceAttached && kart.trackFrame) {
         // Calculate pitch from car's forward direction vs track normal
         const forward = kart.getCarForward();
-        const right = kart.getCarRight();
 
         // Pitch: how much is the car tilted forward/back relative to ground
+        // Only use the component that's actually slope-related (not banking noise)
         const slopeDot = -(forward.x * kart.trackFrame.normal.x + forward.z * kart.trackFrame.normal.z);
-        const targetPitch = Math.asin(THREE.MathUtils.clamp(slopeDot, -0.8, 0.8));
+        // Reduce pitch effect - was too dramatic
+        const targetPitch = Math.asin(THREE.MathUtils.clamp(slopeDot, -0.5, 0.5)) * 0.7;
 
-        // Roll: track banking + car's right direction relative to normal + dynamics
-        const bankDot = -(right.x * kart.trackFrame.normal.x + right.z * kart.trackFrame.normal.z);
-        let targetRoll = Math.asin(THREE.MathUtils.clamp(bankDot, -0.5, 0.5));
+        // Roll: mostly from turn dynamics, with just a hint of banking
+        // Don't use bankDot directly - it was causing the "Riyadh drift" tilting
+        // Instead, use the actual calculated banking angle from the track frame
+        let targetRoll = kart.trackFrame.banking * 0.3; // Only 30% of track banking
 
-        // Add turn-induced roll
-        const turnRoll = -kart.angularVelocity * 0.12;
+        // Add turn-induced roll (this is the main source of visual roll)
+        const turnRoll = -kart.angularVelocity * 0.08;
 
-        // Add lateral velocity roll (sliding sensation)
-        const lateralRoll = -kart.lateralSpeed * 0.004;
+        // Add lateral velocity roll (sliding sensation) - reduced
+        const lateralRoll = -kart.lateralSpeed * 0.002;
 
-        // Add drift roll bias
-        const driftRoll = kart.driftState === 'DRIFTING' ? -kart.driftDirection * 0.15 : 0;
+        // Add drift roll bias - reduced
+        const driftRoll = kart.driftState === 'DRIFTING' ? -kart.driftDirection * 0.08 : 0;
 
         targetRoll += turnRoll + lateralRoll + driftRoll;
-        targetRoll = THREE.MathUtils.clamp(targetRoll, -0.5, 0.5);
+        // Much tighter clamp - max ~17 degrees instead of ~30
+        targetRoll = THREE.MathUtils.clamp(targetRoll, -0.3, 0.3);
 
         // Smooth interpolation
         kart.pitch = THREE.MathUtils.lerp(kart.pitch, targetPitch, 1 - Math.exp(-12 * dt));

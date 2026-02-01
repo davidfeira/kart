@@ -54,7 +54,7 @@ export const CONFIG = {
 
         // Track-relative physics (R4 style)
         trackPhysics: {
-            attachmentThreshold: 0.5,      // Max height above track to stay attached
+            attachmentThreshold: 1.5,      // Max height above track to stay attached (increased from 0.5)
             attachmentBlendSpeed: 8,       // How fast to blend back to surface
             maxBankingAngle: 0.6,          // ~35 degrees max banking
             gravityAlongTrack: 25,         // Gravity component along slope

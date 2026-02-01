@@ -272,7 +272,8 @@ export class TrackGenerator {
         frame.curvature = curvatureVec.length() / (tDelta * 2);
 
         const crossY = frame.tangent.x * curvatureVec.z - frame.tangent.z * curvatureVec.x;
-        frame.banking = Math.min(frame.curvature * 0.15, tp.maxBankingAngle);
+        // Reduced banking multiplier - was causing too much tilt
+        frame.banking = Math.min(frame.curvature * 0.08, tp.maxBankingAngle * 0.5);
         frame.banking *= Math.sign(crossY);
 
         const pAhead = this.trackPath.getPointAt(tAfter);
@@ -300,12 +301,19 @@ export class TrackGenerator {
 
         frame.binormal.crossVectors(frame.tangent, frame.normal).normalize();
 
+        // Calculate lateral offset (how far from track center)
+        // Use FLAT binormal (no Y component) to avoid height issues
+        const flatBinormal = new THREE.Vector3(-frame.tangent.z, 0, frame.tangent.x).normalize();
         const toKart = new THREE.Vector3().subVectors(position, centerPoint);
-        const lateralOffset = toKart.dot(frame.binormal);
+        const lateralOffset = toKart.x * flatBinormal.x + toKart.z * flatBinormal.z;
 
+        // Set frame position - use centerPoint Y directly (from track spline)
+        // Only offset in XZ plane, not Y
         frame.position.copy(centerPoint);
-        frame.position.addScaledVector(frame.binormal, lateralOffset);
-        frame.position.y += Math.abs(lateralOffset) * Math.sin(Math.abs(frame.banking));
+        frame.position.x += flatBinormal.x * lateralOffset;
+        frame.position.z += flatBinormal.z * lateralOffset;
+        // Y comes directly from track center point - no banking adjustment
+        // This keeps the track flat where it should be flat
 
         return frame;
     }

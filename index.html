@@ -623,7 +623,7 @@ class Kart {
     processSteeringInput(input, dt, effectiveMaxSpeed) {
         const p = CONFIG.physics;
 
-        // Raw steering input
+        // Raw steering input (positive = turn left, negative = turn right in Three.js coords)
         let targetSteering = 0;
         if (input.left) targetSteering = 1;
         if (input.right) targetSteering = -1;
@@ -779,12 +779,14 @@ class Kart {
         const p = CONFIG.physics;
 
         if (!this.isGrounded) {
-            // Reduced turning in air
-            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * p.airControl;
+            // Reduced turning in air - steering still works but less effective
+            const turnDir = this.forwardSpeed >= 0 ? 1 : -1;
+            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * p.airControl * turnDir;
         } else if (Math.abs(this.forwardSpeed) > 5) {
             // Ground turning - arcade style
-            const turnRadius = Math.abs(this.forwardSpeed) / (Math.abs(this.steeringAngle) * p.steeringSensitivity + 0.001);
-            this.angularVelocity = this.forwardSpeed / turnRadius;
+            // Turn direction flips when reversing (natural car behavior)
+            const turnDir = this.forwardSpeed > 0 ? 1 : -1;
+            this.angularVelocity = this.steeringAngle * p.steeringSensitivity * turnDir;
 
             // Apply lateral grip (not during drift)
             if (this.driftState !== 'DRIFTING' && this.driftState !== 'INITIATING') {

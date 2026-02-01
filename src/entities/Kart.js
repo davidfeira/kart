@@ -485,17 +485,20 @@ export class Kart {
                 // Stay attached: smoothly follow surface
                 const targetY = this.trackFrame.position.y;
 
-                // More aggressive attachment - prevent bouncing
-                const blendSpeed = tp.attachmentBlendSpeed * (1 + Math.abs(heightAboveTrack) * 2);
-                this.position.y = THREE.MathUtils.lerp(
-                    this.position.y,
-                    targetY,
-                    1 - Math.exp(-blendSpeed * dt)
-                );
-
-                // If very close to track, snap directly
-                if (Math.abs(heightAboveTrack) < 0.05) {
+                // If BELOW track, snap up immediately (prevent sinking)
+                if (heightAboveTrack < 0) {
                     this.position.y = targetY;
+                } else if (Math.abs(heightAboveTrack) < 0.1) {
+                    // If very close to track, snap directly
+                    this.position.y = targetY;
+                } else {
+                    // More aggressive attachment - prevent bouncing
+                    const blendSpeed = tp.attachmentBlendSpeed * (1 + Math.abs(heightAboveTrack) * 2);
+                    this.position.y = THREE.MathUtils.lerp(
+                        this.position.y,
+                        targetY,
+                        1 - Math.exp(-blendSpeed * dt)
+                    );
                 }
 
                 this.isGrounded = true;

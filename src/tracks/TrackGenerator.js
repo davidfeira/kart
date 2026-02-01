@@ -272,9 +272,15 @@ export class TrackGenerator {
         frame.curvature = curvatureVec.length() / (tDelta * 2);
 
         const crossY = frame.tangent.x * curvatureVec.z - frame.tangent.z * curvatureVec.x;
-        // Reduced banking multiplier - was causing too much tilt
-        frame.banking = Math.min(frame.curvature * 0.08, tp.maxBankingAngle * 0.5);
-        frame.banking *= Math.sign(crossY);
+        // Banking only on very sharp curves - gentle curves shouldn't bank the car
+        // Curvature threshold: only apply banking above this curvature
+        const curvatureThreshold = 5.0;  // Skip banking for gentle curves
+        if (frame.curvature > curvatureThreshold) {
+            frame.banking = Math.min((frame.curvature - curvatureThreshold) * 0.02, tp.maxBankingAngle * 0.3);
+            frame.banking *= Math.sign(crossY);
+        } else {
+            frame.banking = 0;
+        }
 
         const pAhead = this.trackPath.getPointAt(tAfter);
         const pBehind = this.trackPath.getPointAt(tBefore);
@@ -307,13 +313,16 @@ export class TrackGenerator {
         const toKart = new THREE.Vector3().subVectors(position, centerPoint);
         const lateralOffset = toKart.x * flatBinormal.x + toKart.z * flatBinormal.z;
 
-        // Set frame position - use centerPoint Y directly (from track spline)
-        // Only offset in XZ plane, not Y
+        // Set frame position
         frame.position.copy(centerPoint);
         frame.position.x += flatBinormal.x * lateralOffset;
         frame.position.z += flatBinormal.z * lateralOffset;
-        // Y comes directly from track center point - no banking adjustment
-        // This keeps the track flat where it should be flat
+
+        // Add surface elevation to match track mesh
+        // TrackGeometry adds 0.05 to all vertices, plus we add a small buffer
+        // to keep car wheels above the visual surface
+        const surfaceElevation = 0.25;
+        frame.position.y += surfaceElevation;
 
         return frame;
     }

@@ -975,7 +975,8 @@ export class Kart {
         this.mesh.rotation.x = this.pitch;
         this.mesh.rotation.z = this.roll;
 
-        // Animate wheels and particles (uses KartVisuals)
+        // Animate wheels, suspension, and particles (uses KartVisuals)
+        KartVisuals.updateSuspension(this, dt);
         KartVisuals.updateWheelVisuals(this, dt);
         KartVisuals.updateDriftParticles(this.driftParticles, this, dt);
         KartVisuals.updateSparkParticles(this.sparkParticles, this, dt);

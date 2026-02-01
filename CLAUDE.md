@@ -41,6 +41,9 @@ mario-kart-clone/
 ### Centralized Logging
 All logs go to the `logs/` folder. Do not log to console in production code.
 
+**IMPORTANT: NEVER use `console.log()` directly for debugging.**
+Always use the Logger module so logs are properly saved to /logs/ folder when running in dev mode.
+
 ### Logger Module
 The logger lives in `src/utils/logger.js`. Features:
 - Writes to `logs/` directory when running via `devmode.bat`

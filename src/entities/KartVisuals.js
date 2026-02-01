@@ -7,6 +7,10 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../utils/config.js';
+import { Logger } from '../utils/logger.js';
+
+// Module logger - logs to /logs/physics.log in dev mode
+const log = Logger.getLogger('KartVisuals');
 
 /**
  * Creates drift smoke particle system
@@ -316,10 +320,16 @@ export function updateSparkParticles(particles, kart, dt) {
     particles.geometry.attributes.size.needsUpdate = true;
 }
 
+// Debug logging counter for orientation
+let orientDebugCounter = 0;
+
 /**
  * Updates kart pitch and roll based on track surface and movement
  */
 export function updateOrientation(kart, dt) {
+    orientDebugCounter++;
+    const shouldLog = orientDebugCounter % 60 === 0;
+
     if (kart.surfaceAttached && kart.trackFrame) {
         // Calculate pitch from car's forward direction vs track normal
         const forward = kart.getCarForward();
@@ -330,23 +340,28 @@ export function updateOrientation(kart, dt) {
         // Reduce pitch effect - was too dramatic
         const targetPitch = Math.asin(THREE.MathUtils.clamp(slopeDot, -0.5, 0.5)) * 0.7;
 
-        // Roll: mostly from turn dynamics, with just a hint of banking
-        // Don't use bankDot directly - it was causing the "Riyadh drift" tilting
-        // Instead, use the actual calculated banking angle from the track frame
-        let targetRoll = kart.trackFrame.banking * 0.3; // Only 30% of track banking
+        // Roll: ONLY from significant track banking, NOT from turning or flat ground noise
+        // Track reports constant 0.3 banking even on flat ground - need higher threshold
+        const bankingThreshold = 0.35; // ~20 degrees - filters out the 0.3 noise
+        let targetRoll = 0;
 
-        // Add turn-induced roll (this is the main source of visual roll)
-        const turnRoll = -kart.angularVelocity * 0.08;
+        if (shouldLog) {
+            log.debug('Banking check', {
+                banking: kart.trackFrame.banking.toFixed(4),
+                threshold: bankingThreshold,
+                currentRoll: kart.roll.toFixed(4)
+            });
+        }
 
-        // Add lateral velocity roll (sliding sensation) - reduced
-        const lateralRoll = -kart.lateralSpeed * 0.002;
+        if (Math.abs(kart.trackFrame.banking) > bankingThreshold) {
+            targetRoll = kart.trackFrame.banking * 0.4;
+            if (shouldLog) {
+                log.debug('Banking ABOVE THRESHOLD', { targetRoll: targetRoll.toFixed(4) });
+            }
+        }
 
-        // Add drift roll bias - reduced
-        const driftRoll = kart.driftState === 'DRIFTING' ? -kart.driftDirection * 0.08 : 0;
-
-        targetRoll += turnRoll + lateralRoll + driftRoll;
-        // Much tighter clamp - max ~17 degrees instead of ~30
-        targetRoll = THREE.MathUtils.clamp(targetRoll, -0.3, 0.3);
+        // Clamp to reasonable values
+        targetRoll = THREE.MathUtils.clamp(targetRoll, -0.25, 0.25);
 
         // Smooth interpolation
         kart.pitch = THREE.MathUtils.lerp(kart.pitch, targetPitch, 1 - Math.exp(-12 * dt));
@@ -357,10 +372,17 @@ export function updateOrientation(kart, dt) {
         const slopeDot = forward.x * kart.groundNormal.x + forward.z * kart.groundNormal.z;
         const targetPitch = -Math.asin(THREE.MathUtils.clamp(slopeDot, -0.8, 0.8)) * 0.8;
 
-        const turnRoll = -kart.angularVelocity * 0.15;
-        const lateralRoll = -kart.lateralSpeed * 0.003;
-        const driftRoll = kart.driftState === 'DRIFTING' ? -kart.driftDirection * 0.1 : 0;
-        const targetRoll = THREE.MathUtils.clamp(turnRoll + lateralRoll + driftRoll, -0.4, 0.4);
+        // No turn-induced roll - only significant slope-based roll
+        // Calculate roll from the ground normal's sideways tilt
+        const right = new THREE.Vector3(Math.cos(kart.rotation), 0, -Math.sin(kart.rotation));
+        const bankDot = right.x * kart.groundNormal.x + right.z * kart.groundNormal.z;
+
+        // Add threshold to ignore flat ground noise
+        const bankingThreshold = 0.05;
+        let targetRoll = 0;
+        if (Math.abs(bankDot) > bankingThreshold) {
+            targetRoll = THREE.MathUtils.clamp(Math.asin(bankDot) * 0.4, -0.25, 0.25);
+        }
 
         kart.pitch = THREE.MathUtils.lerp(kart.pitch, targetPitch, 1 - Math.exp(-10 * dt));
         kart.roll = THREE.MathUtils.lerp(kart.roll, targetRoll, 1 - Math.exp(-8 * dt));
@@ -372,22 +394,161 @@ export function updateOrientation(kart, dt) {
 }
 
 /**
+ * Updates suspension animation based on acceleration and speed
+ * Creates weight transfer effect for more arcade feel
+ */
+export function updateSuspension(kart, dt) {
+    const wheelHubs = kart.mesh.userData.wheelHubs;
+    const bodyGroup = kart.mesh.userData.bodyGroup;
+
+    if (!wheelHubs || !bodyGroup) return;
+
+    // Initialize suspension state if not present
+    if (!kart.suspensionState) {
+        kart.suspensionState = {
+            frontCompression: 0,
+            rearCompression: 0,
+            bodyPitch: 0,
+            lastSpeed: 0
+        };
+    }
+
+    const state = kart.suspensionState;
+    const suspensionTravel = 0.08; // Max compression distance
+    const stiffness = 8; // Spring stiffness for lerp
+
+    // Calculate acceleration (change in speed)
+    const acceleration = (kart.forwardSpeed - state.lastSpeed) / Math.max(dt, 0.001);
+    state.lastSpeed = kart.forwardSpeed;
+
+    // Weight transfer: braking compresses front, acceleration compresses rear
+    const accelFactor = THREE.MathUtils.clamp(acceleration / 100, -1, 1);
+
+    // Target compression values
+    let targetFrontCompression = 0;
+    let targetRearCompression = 0;
+
+    if (accelFactor < 0) {
+        // Braking - front dips
+        targetFrontCompression = -accelFactor * suspensionTravel;
+    } else if (accelFactor > 0) {
+        // Accelerating - rear dips (squat)
+        targetRearCompression = accelFactor * suspensionTravel * 0.7;
+    }
+
+    // Add speed-based settling (car sits lower at high speed)
+    const speedFactor = Math.min(Math.abs(kart.forwardSpeed) / 150, 1);
+    const speedSettle = speedFactor * 0.02;
+    targetFrontCompression += speedSettle;
+    targetRearCompression += speedSettle;
+
+    // Add landing bounce if car was airborne
+    if (!kart.isGrounded && kart.wasGrounded) {
+        // Just landed - compress both
+        targetFrontCompression += 0.05;
+        targetRearCompression += 0.05;
+    }
+    kart.wasGrounded = kart.isGrounded;
+
+    // Smooth interpolation
+    state.frontCompression = THREE.MathUtils.lerp(
+        state.frontCompression,
+        targetFrontCompression,
+        1 - Math.exp(-stiffness * dt)
+    );
+    state.rearCompression = THREE.MathUtils.lerp(
+        state.rearCompression,
+        targetRearCompression,
+        1 - Math.exp(-stiffness * dt)
+    );
+
+    // Apply to wheel hubs (move them up when compressed)
+    wheelHubs.forEach(hub => {
+        const baseY = 0.28; // Original wheel height
+        const compression = hub.userData.isFront
+            ? state.frontCompression
+            : state.rearCompression;
+
+        hub.position.y = baseY - compression;
+    });
+
+    // Apply subtle body pitch based on suspension difference
+    const pitchFromSuspension = (state.frontCompression - state.rearCompression) * 0.5;
+    state.bodyPitch = THREE.MathUtils.lerp(
+        state.bodyPitch,
+        pitchFromSuspension,
+        1 - Math.exp(-stiffness * dt)
+    );
+
+    // Apply to body group (subtle nose dive / squat)
+    bodyGroup.rotation.x = state.bodyPitch;
+
+    // Average compression affects body height
+    const avgCompression = (state.frontCompression + state.rearCompression) / 2;
+    bodyGroup.position.y = -avgCompression * 0.3;
+}
+
+// Debug logging counter
+let wheelDebugCounter = 0;
+
+/**
  * Updates wheel spin and steering visuals
+ * Uses new hub/assembly hierarchy for correct rotation
  */
 export function updateWheelVisuals(kart, dt) {
-    const wheels = kart.mesh.userData.wheels;
+    const wheelHubs = kart.mesh.userData.wheelHubs;
 
-    wheels.forEach(wheel => {
-        // Wheel spin based on forward speed
-        wheel.rotation.x += kart.forwardSpeed * 0.15 * dt;
+    // Fallback for old wheel structure (backwards compatibility)
+    if (!wheelHubs) {
+        const wheels = kart.mesh.userData.wheels;
+        if (wheels) {
+            wheels.forEach(wheel => {
+                wheel.rotation.x += kart.forwardSpeed * 0.15 * dt;
+                if (wheel.userData.isFront) {
+                    let steerAngle = kart.steeringAngle * 0.8;
+                    if (kart.driftState === 'DRIFTING') {
+                        steerAngle = -kart.driftDirection * 0.4;
+                    }
+                    wheel.rotation.y = steerAngle;
+                }
+            });
+        }
+        return;
+    }
 
-        // Front wheel steering
-        if (wheel.userData.isFront) {
+    // Debug logging every 60 frames
+    wheelDebugCounter++;
+    const shouldLog = wheelDebugCounter % 60 === 0;
+
+    if (shouldLog) {
+        log.debug('Wheel update', { hubCount: wheelHubs.length, speed: kart.forwardSpeed.toFixed(1) });
+    }
+
+    // New hub/assembly hierarchy
+    wheelHubs.forEach((hub, index) => {
+        const wheelAssembly = hub.userData.wheelAssembly;
+
+        if (!wheelAssembly) {
+            log.error(`Hub ${index} missing wheelAssembly!`);
+            return;
+        }
+
+        // Wheel spin - rotate around X axis (the axle)
+        // Spokes make this rotation visible
+        const spinRate = kart.forwardSpeed * 0.15;
+        wheelAssembly.rotation.x += spinRate * dt;
+
+        if (shouldLog) {
+            log.debug(`Wheel ${index}`, { isFront: hub.userData.isFront, rotX: wheelAssembly.rotation.x.toFixed(2) });
+        }
+
+        // Front wheel steering - rotate the hub around Y
+        if (hub.userData.isFront) {
             let steerAngle = kart.steeringAngle * 0.8;
             if (kart.driftState === 'DRIFTING') {
                 steerAngle = -kart.driftDirection * 0.4;
             }
-            wheel.rotation.y = steerAngle;
+            hub.rotation.y = steerAngle;
         }
     });
 }

@@ -535,6 +535,49 @@ body {
     height: 100%;
 }
 
+/* ============= ROTATE DEVICE OVERLAY ============= */
+.rotate-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+}
+
+.rotate-content {
+    text-align: center;
+    color: #0ff;
+}
+
+.rotate-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    animation: rotateHint 2s ease-in-out infinite;
+}
+
+@keyframes rotateHint {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+}
+
+.rotate-content p {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.2rem;
+    text-shadow: 0 0 10px #0ff;
+}
+
+/* Show rotate overlay only on mobile in portrait */
+@media (max-width: 900px) and (orientation: portrait) {
+    .rotate-overlay {
+        display: flex;
+    }
+}
+
 /* ============= MOBILE TOUCH CONTROLS ============= */
 .touch-controls {
     position: fixed;

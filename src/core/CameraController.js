@@ -37,6 +37,10 @@ export class CameraController {
         // Previous state for detecting changes
         this.wasGrounded = true;
         this.lastVerticalVelocity = 0;
+
+        // Smoothed slide values for camera (prevents snapping on exit)
+        this.smoothedSlideAngle = 0;
+        this.smoothedSlideAmount = 0; // 0 = not sliding, 1 = full slide
     }
 
     update(kartPosition, kartRotation, kartSpeed, isBoosting = false, kart = null) {
@@ -53,29 +57,63 @@ export class CameraController {
         const c = CONFIG.camera;
         const dt = 1 / 60; // Approximate delta
 
-        // Get kart state for advanced effects
+        // Get kart state for advanced effects (R4-style sliding)
         const bodyRoll = kart?.bodyRoll || 0;
         const isGrounded = kart?.isGrounded ?? true;
         const verticalVelocity = kart?.localVelocity?.y || 0;
-        const driftState = kart?.driftState || 'NONE';
-        const driftDirection = kart?.driftDirection || 0;
+        const isSliding = kart?.isSliding || false;
+        const slideDirection = kart?.slideDirection || 0;
+        const slideAngle = kart?.slideAngle || 0;
+        const eBrakeActive = kart?.eBrakeActive || false;
+
+        // ===== SMOOTH SLIDE VALUES (prevents camera snap on exit) =====
+        // Smoothly blend towards current slide state
+        const targetSlideAmount = isSliding ? 1 : 0;
+        const slideBlendIn = 0.15;  // Fast blend in
+        const slideBlendOut = 0.08; // Slower blend out (smoother exit)
+        const slideBlend = targetSlideAmount > this.smoothedSlideAmount ? slideBlendIn : slideBlendOut;
+        this.smoothedSlideAmount = THREE.MathUtils.lerp(this.smoothedSlideAmount, targetSlideAmount, slideBlend);
+
+        // Smooth the slide angle too
+        const targetAngle = isSliding ? slideAngle : 0;
+        const angleBlend = Math.abs(targetAngle) > Math.abs(this.smoothedSlideAngle) ? 0.12 : 0.06;
+        this.smoothedSlideAngle = THREE.MathUtils.lerp(this.smoothedSlideAngle, targetAngle, angleBlend);
+
+        // Use smoothed values for camera
+        const camSlideAmount = this.smoothedSlideAmount;
+        const camSlideAngle = this.smoothedSlideAngle;
 
         // ===== CALCULATE IDEAL CAMERA POSITION =====
         const speedRatio = Math.abs(kartSpeed) / CONFIG.physics.maxSpeed;
 
-        // Dynamic distance - pull back slightly at speed
-        const dynamicDistance = c.distance + speedRatio * 1.5;
+        // Dynamic distance - pull back slightly at speed, more during slides
+        const slideDistanceBonus = Math.abs(camSlideAngle) * 1.5 * camSlideAmount;
+        const dynamicDistance = c.distance + speedRatio * 1.5 + slideDistanceBonus;
         const dynamicHeight = c.height + speedRatio * 0.5;
 
-        // Base offset behind and above kart
-        let offsetX = -Math.sin(kartRotation) * dynamicDistance;
-        let offsetZ = -Math.cos(kartRotation) * dynamicDistance;
+        // Camera angle - during slides, camera rotates to show the slide better
+        let cameraAngle = kartRotation;
+        if (Math.abs(camSlideAngle) > 0.05) {
+            // Blend camera angle towards slide direction for better view
+            const slideViewOffset = camSlideAngle * 0.4 * camSlideAmount;
+            cameraAngle = kartRotation + slideViewOffset;
+        }
 
-        // Drift camera offset - shift camera outward during drift
-        if (driftState === 'DRIFTING') {
-            const driftOffset = driftDirection * c.driftCameraOffset;
-            offsetX += Math.cos(kartRotation) * driftOffset;
-            offsetZ -= Math.sin(kartRotation) * driftOffset;
+        // Base offset behind and above kart
+        let offsetX = -Math.sin(cameraAngle) * dynamicDistance;
+        let offsetZ = -Math.cos(cameraAngle) * dynamicDistance;
+
+        // Slide camera offset - shift camera outward during slides (R4 style)
+        if (camSlideAmount > 0.1) {
+            const slideOffset = slideDirection * c.driftCameraOffset * (1 + Math.abs(camSlideAngle)) * camSlideAmount;
+            offsetX += Math.cos(kartRotation) * slideOffset;
+            offsetZ -= Math.sin(kartRotation) * slideOffset;
+        }
+
+        // E-brake pulls camera back more dramatically
+        if (eBrakeActive) {
+            offsetX *= 1.15;
+            offsetZ *= 1.15;
         }
 
         const idealPosition = new THREE.Vector3(
@@ -84,12 +122,19 @@ export class CameraController {
             kartPosition.z + offsetZ
         );
 
-        // Look ahead point - more dramatic at speed
+        // Look ahead point - during slides, look more towards where car is going
         const dynamicLookAhead = c.lookAheadDistance + speedRatio * 2.5;
+
+        // During slides, blend look-at between car heading and travel direction
+        let lookAtAngle = kartRotation;
+        if (Math.abs(camSlideAngle) > 0.05) {
+            lookAtAngle = kartRotation + camSlideAngle * 0.3 * camSlideAmount;
+        }
+
         const lookAhead = new THREE.Vector3(
-            Math.sin(kartRotation) * dynamicLookAhead,
+            Math.sin(lookAtAngle) * dynamicLookAhead,
             0.8 + speedRatio * 0.3,
-            Math.cos(kartRotation) * dynamicLookAhead
+            Math.cos(lookAtAngle) * dynamicLookAhead
         );
         const idealLookAt = kartPosition.clone().add(lookAhead);
 
@@ -129,6 +174,17 @@ export class CameraController {
             this.shakeIntensity = Math.max(this.shakeIntensity, c.boostShakeIntensity);
         }
 
+        // Add shake during heavy slides (R4 feel) - use smoothed values
+        if (Math.abs(camSlideAngle) > 0.3) {
+            const slideShake = Math.abs(camSlideAngle) * 0.04 * camSlideAmount;
+            this.shakeIntensity = Math.max(this.shakeIntensity, slideShake);
+        }
+
+        // E-brake adds extra shake
+        if (eBrakeActive) {
+            this.shakeIntensity = Math.max(this.shakeIntensity, 0.05);
+        }
+
         if (this.shakeIntensity > 0.001) {
             this.shakeTime += dt * 60;
 
@@ -151,7 +207,14 @@ export class CameraController {
 
         // ===== CAMERA TILT =====
         // Tilt camera with car's body roll (sympathetic lean)
-        const targetTilt = THREE.MathUtils.clamp(-bodyRoll * c.tiltFactor, -c.maxTilt, c.maxTilt);
+        let targetTilt = THREE.MathUtils.clamp(-bodyRoll * c.tiltFactor, -c.maxTilt, c.maxTilt);
+
+        // Extra tilt during slides to enhance the drama - use smoothed values
+        if (camSlideAmount > 0.1) {
+            const slideTilt = camSlideAngle * 0.15 * camSlideAmount;
+            targetTilt += THREE.MathUtils.clamp(slideTilt, -c.maxTilt * 0.5, c.maxTilt * 0.5);
+        }
+
         this.currentTilt = THREE.MathUtils.lerp(this.currentTilt, targetTilt, 0.15);
 
         // ===== APPLY TO CAMERA =====
@@ -167,7 +230,11 @@ export class CameraController {
         // Quadratic curve for more punch at high speed
         const fovFromSpeed = speedRatio * speedRatio * (c.maxFov - c.baseFov) * c.fovSpeedScale;
         const boostFovBonus = isBoosting ? 8 : 0;
-        const targetFov = c.baseFov + fovFromSpeed + boostFovBonus;
+
+        // Extra FOV during slides for intensity - use smoothed values
+        const slideFovBonus = Math.abs(camSlideAngle) * 8 * camSlideAmount;
+
+        const targetFov = c.baseFov + fovFromSpeed + boostFovBonus + slideFovBonus;
 
         // Smooth FOV changes
         this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 0.12);
@@ -289,6 +356,8 @@ export class CameraController {
         this.shakeIntensity = 0;
         this.currentTilt = 0;
         this.currentFov = c.baseFov;
+        this.smoothedSlideAngle = 0;
+        this.smoothedSlideAmount = 0;
         this.camera.position.copy(this.currentPosition);
         this.camera.lookAt(this.currentLookAt);
         this.camera.fov = c.baseFov;

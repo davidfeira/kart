@@ -172,8 +172,8 @@ export function updateBoostFlame(flame, kart, dt) {
         flame.material.opacity = 0.8 + Math.random() * 0.2;
         flame.scale.setScalar(1 + Math.random() * 0.3);
 
-        // Color based on boost power
-        const intensity = kart.boostPower / CONFIG.physics.driftBoostPower[2];
+        // Color based on boost power (max boost is 50)
+        const intensity = kart.boostPower / 50;
         if (intensity > 0.8) {
             flame.material.color.setHex(0x00ffff);
         } else if (intensity > 0.5) {

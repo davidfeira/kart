@@ -39,13 +39,59 @@ export const CONFIG = {
         gripCoefficient: 3.2,
         groundFriction: 0.02,
 
-        // Drift (Ridge Racer style)
-        driftEntrySpeed: 40,
-        driftGripMultiplier: 0.4,
-        driftCounterSteer: 0.6,
-        driftBoostLevels: [0.8, 1.6, 2.5],
-        driftBoostPower: [15, 30, 50],
-        driftBoostDuration: [0.4, 0.7, 1.0],
+        // R4-style grip system - E-brake focused drifting
+        grip: {
+            // Base grip
+            baseGrip: 1.0,
+
+            // Speed-induced grip loss (minimal - mostly stable at speed)
+            speedGripLossStart: 80,        // Only at very high speed
+            speedGripLossMax: 0.08,        // Very small effect
+
+            // Cornering force grip loss (minimal - e-brake is the main drift method)
+            corneringForceThreshold: 8000, // Very high - normal turning is stable
+            corneringGripLossMax: 0.15,    // Small effect when exceeded
+
+            // Throttle lift-off (small bonus, not a drift trigger)
+            liftOffGripBonus: 0.1,         // Small grip bonus
+            liftOffTransitionSpeed: 4.0,
+
+            // Brake tap - still works but less aggressive
+            brakeTapGripLoss: 0.25,        // Moderate grip loss
+            brakeTapDecay: 6.0,            // Fades quickly
+
+            // Throttle reapply - disabled (e-brake is the drift method)
+            reapplyGripLoss: 0.0,          // No effect
+            reapplyMinLiftTime: 0.15,
+
+            // Recovery - fast so car feels responsive
+            gripRecoveryRate: 8.0,         // Very fast recovery
+            gripLossRate: 10.0,            // Fast grip loss when e-braking
+
+            // Thresholds
+            slideThreshold: 0.55,          // Below this grip = sliding
+            fullDriftThreshold: 0.35,      // Below this = full drift mode
+            minGrip: 0.2,                  // Minimum grip
+
+            // Slide angle control
+            slideAngleBuildRate: 3.0,      // How fast slide angle builds
+            slideAngleDamping: 3.5,        // Damping
+            counterSteerRate: 4.0,         // Very effective counter-steering
+            maxSlideAngle: 0.7,            // ~40 degrees max slide
+
+            // The "snap" exit
+            snapAngleReduction: 0.15,      // Quick snap back
+            snapDuration: 0.25,
+            snapGripBonus: 0.2             // Good grip boost on exit
+        },
+
+        // E-brake (primary drift method)
+        eBrake: {
+            gripLoss: 0.6,                 // Strong grip loss for easy drifts
+            speedReduction: 0.92,          // Less speed loss (was 0.85)
+            slideAngleBoost: 1.8,          // Stronger slide angle
+            recoveryDelay: 0.2             // Quick recovery after release
+        },
 
         // Ground following (spring-damper)
         groundSpringStiffness: 500,
@@ -69,13 +115,12 @@ export const CONFIG = {
 
         // Track-relative physics (R4 style)
         trackPhysics: {
-            attachmentThreshold: 1.5,      // Max height above track to stay attached (increased from 0.5)
+            attachmentThreshold: 1.5,      // Max height above track to stay attached
             attachmentBlendSpeed: 8,       // How fast to blend back to surface
             maxBankingAngle: 0.6,          // ~35 degrees max banking
             gravityAlongTrack: 25,         // Gravity component along slope
-            driftYawDamping: 3.0,          // Stabilizes drift angle
-            driftCountersteerAssist: 0.15, // Subtle auto-countersteer
-            driftRearGripMultiplier: 0.25, // Rear grip during drift
+            slideYawDamping: 3.0,          // Stabilizes slide angle
+            slideCountersteerAssist: 0.15, // Subtle auto-countersteer at extreme angles
             trackSearchRadius: 0.1,        // Initial binary search radius
             trackSearchIterations: 8       // Max iterations for refinement
         },

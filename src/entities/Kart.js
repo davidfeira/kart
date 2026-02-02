@@ -66,7 +66,21 @@ export class Kart {
         this.steeringInput = 0;
         this.steeringAngle = 0;
 
-        // Drift state machine: 'NONE', 'INITIATING', 'DRIFTING', 'EXITING'
+        // R4-style unified grip system (replaces Mario Kart drift)
+        this.throttleState = 'ON';       // 'ON', 'LIFTING', 'OFF', 'REAPPLYING'
+        this.throttleLiftTime = 0;       // How long throttle has been lifted
+        this.brakeTapAmount = 0;         // Decaying brake tap effect (0-1)
+        this.r4Grip = 1.0;               // Current grip level (0-1)
+        this.isSliding = false;          // True when grip < slideThreshold
+        this.isFullDrift = false;        // True when grip < fullDriftThreshold
+        this.slideAngle = 0;             // Angle of slide (radians)
+        this.slideDirection = 0;         // Direction of slide (-1 left, 1 right)
+        this.eBrakeActive = false;       // E-brake held down
+        this.eBrakeRecoveryTimer = 0;    // Delay before grip recovers after e-brake
+        this.snapExitTimer = 0;          // Duration of snap exit bonus
+        this.wasSliding = false;         // For detecting slide exit
+
+        // Legacy drift state (kept for backwards compatibility with visuals)
         this.driftState = 'NONE';
         this.driftDirection = 0;
         this.driftAngle = 0;
@@ -147,11 +161,12 @@ export class Kart {
             kartLog.debug('Physics state', {
                 pos: `${this.position.x.toFixed(1)},${this.position.y.toFixed(1)},${this.position.z.toFixed(1)}`,
                 speed: this.forwardSpeed.toFixed(1),
-                drift: this.driftState,
+                grip: this.r4Grip.toFixed(2),
+                sliding: this.isSliding,
+                slideAngle: (this.slideAngle * 180 / Math.PI).toFixed(1),
+                throttle: this.throttleState,
                 attached: this.surfaceAttached,
-                trackT: this.lastTrackT?.toFixed(3) || 'N/A',
-                slope: (this.trackFrame?.slope * 180 / Math.PI)?.toFixed(1) || '0',
-                banking: (this.trackFrame?.banking * 180 / Math.PI)?.toFixed(1) || '0'
+                trackT: this.lastTrackT?.toFixed(3) || 'N/A'
             });
         }
 
@@ -210,8 +225,10 @@ export class Kart {
         // ===== STEERING =====
         this.processSteeringInput(input, dt, effectiveMaxSpeed);
 
-        // ===== DRIFT STATE MACHINE =====
-        this.updateDriftState(input, dt, null); // Pass null, we use local velocity now
+        // ===== R4 GRIP SYSTEM (replaces drift state machine) =====
+        this.updateThrottleState(input, dt);
+        this.updateR4Grip(input, dt);
+        this.updateSlideAngle(dt);
 
         // ===== APPLY HEADING (rotation) =====
         this.updateHeading(dt);
@@ -332,7 +349,7 @@ export class Kart {
         this.speed = this.forwardSpeed;
     }
 
-    // Apply heading changes (steering/turning)
+    // Apply heading changes (steering/turning) - R4 style
     updateHeading(dt) {
         const p = CONFIG.physics;
         const speed = Math.abs(this.localVelocity.x);
@@ -341,9 +358,18 @@ export class Kart {
             const turnDir = this.localVelocity.x > 0 ? 1 : -1;
             let turnRate = this.steeringAngle * p.steeringSensitivity * turnDir;
 
-            // During drift, reduce direct steering effect
-            if (this.driftState === 'DRIFTING') {
-                turnRate *= 0.6;
+            // During sliding, reduce direct steering effect (counter-steer controls angle instead)
+            if (this.isSliding) {
+                turnRate *= 0.5;
+
+                // Add rotation from slide angle (car rotates into the slide)
+                const slideRotation = this.slideAngle * 1.5 * turnDir;
+                turnRate += slideRotation;
+            }
+
+            // E-brake increases rotation rate for aggressive hairpin turns
+            if (this.eBrakeActive) {
+                turnRate *= 1.3;
             }
 
             this.angularVelocity = turnRate;
@@ -357,13 +383,14 @@ export class Kart {
         this.rotation += this.angularVelocity * dt;
     }
 
-    // Boost in local frame
+    // Boost in local frame (for pickups, items, etc. - not drift boost)
     updateLocalBoost(dt) {
         if (this.boostTimeRemaining > 0) {
             this.boostTimeRemaining -= dt;
 
             // Apply boost acceleration in local forward direction
-            const boostAccel = 200 * dt * (this.boostPower / CONFIG.physics.driftBoostPower[2]);
+            // Normalize to max boost power of 50 (arbitrary reference)
+            const boostAccel = 200 * dt * (this.boostPower / 50);
             this.localVelocity.x += boostAccel;
         } else {
             this.boostPower = 0;
@@ -395,14 +422,14 @@ export class Kart {
         // Base roll from lateral G (lean outward from turn)
         let targetRoll = -this.lateralG * bd.rollGSensitivity * 100;
 
-        // R4 MAGIC: During drift, car leans INTO the slide (opposite to realistic physics)
+        // R4 MAGIC: During slide, car leans INTO the slide (opposite to realistic physics)
         // This creates that signature arcade racing feel
-        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
-            // Lean into drift direction
-            const driftLean = this.driftDirection * bd.driftRollBonus;
-            // Also add roll from the drift angle itself
-            const angleRoll = this.driftAngle * 0.3;
-            targetRoll = driftLean + angleRoll;
+        if (this.isSliding) {
+            // Lean into slide direction
+            const slideLean = this.slideDirection * bd.driftRollBonus;
+            // Also add roll from the slide angle itself
+            const angleRoll = this.slideAngle * 0.3;
+            targetRoll = slideLean + angleRoll;
         }
 
         // Clamp and smooth roll
@@ -469,6 +496,225 @@ export class Kart {
         }
 
         this.currentGripMultiplier = Math.max(sp.minGrip, gripCurve);
+    }
+
+    // ===== R4-STYLE UNIFIED GRIP SYSTEM =====
+
+    // Track throttle state transitions for R4-style drift initiation
+    updateThrottleState(input, dt) {
+        const g = CONFIG.physics.grip;
+        const wasOn = this.throttleState === 'ON';
+        const isOn = input.forward;
+
+        if (wasOn && !isOn) {
+            // Throttle lifted!
+            this.throttleState = 'LIFTING';
+            this.throttleLiftTime = 0;
+        } else if (!wasOn && isOn) {
+            // Throttle reapplied - this can break rear loose (the R4 magic)
+            this.throttleState = 'REAPPLYING';
+        } else if (isOn) {
+            this.throttleState = 'ON';
+            this.throttleLiftTime = 0;
+        } else {
+            this.throttleState = 'OFF';
+            this.throttleLiftTime += dt;
+        }
+
+        // Brake tap detection - quick brake tap causes grip loss
+        if (input.backward && this.forwardSpeed > 20) {
+            this.brakeTapAmount = Math.min(1, this.brakeTapAmount + 8 * dt);
+        } else {
+            this.brakeTapAmount = Math.max(0, this.brakeTapAmount - g.brakeTapDecay * dt);
+        }
+
+        // E-brake recovery timer
+        if (this.eBrakeRecoveryTimer > 0) {
+            this.eBrakeRecoveryTimer -= dt;
+        }
+    }
+
+    // Unified grip calculation - handles high-speed sliding, throttle-lift drifts, e-brake
+    updateR4Grip(input, dt) {
+        const g = CONFIG.physics.grip;
+        const eb = CONFIG.physics.eBrake;
+        const speed = Math.abs(this.forwardSpeed);
+        const effectiveMaxSpeed = this.getMaxSpeed(this.config.modifiers);
+
+        let targetGrip = g.baseGrip;
+
+        // 1. Speed-based grip loss (high-speed natural sliding)
+        if (speed > g.speedGripLossStart) {
+            const speedRatio = (speed - g.speedGripLossStart) / (effectiveMaxSpeed - g.speedGripLossStart);
+            targetGrip -= Math.min(speedRatio, 1.0) * g.speedGripLossMax;
+        }
+
+        // 2. Cornering force grip loss (turning hard at speed)
+        // Use steeringInput (not steeringAngle) so releasing keys immediately helps recovery
+        const corneringForce = speed * speed * Math.abs(this.steeringInput);
+        if (corneringForce > g.corneringForceThreshold) {
+            const forceRatio = Math.min(1, (corneringForce - g.corneringForceThreshold) / g.corneringForceThreshold);
+            targetGrip -= forceRatio * g.corneringGripLossMax;
+        }
+
+        // Bonus: If not steering at all, give extra grip recovery boost
+        if (Math.abs(this.steeringInput) < 0.1) {
+            targetGrip += 0.1; // Help car straighten out when not steering
+        }
+
+        // 3. Throttle lift-off gives grip bonus (R4: lifting helps tight corners)
+        if (this.throttleState === 'OFF' || this.throttleState === 'LIFTING') {
+            targetGrip += g.liftOffGripBonus;
+        }
+
+        // 4. Brake tap breaks grip (R4: tap brake to initiate slide)
+        targetGrip -= this.brakeTapAmount * g.brakeTapGripLoss;
+
+        // 5. Throttle reapply breaks rear loose (THE R4 magic moment!)
+        // Only if throttle was lifted long enough and we're steering
+        if (this.throttleState === 'REAPPLYING' &&
+            this.throttleLiftTime > g.reapplyMinLiftTime &&
+            Math.abs(this.steeringInput) > 0.3 &&
+            speed > 35) {
+            targetGrip -= g.reapplyGripLoss;
+            // Set slide direction based on steering
+            if (!this.isSliding) {
+                this.slideDirection = Math.sign(this.steeringInput);
+            }
+        }
+
+        // 6. E-brake (repurposed drift button) - massive grip loss for hairpins
+        if (input.drift && speed > 10) {
+            this.eBrakeActive = true;
+            this.eBrakeRecoveryTimer = eb.recoveryDelay;
+            targetGrip -= eb.gripLoss;
+
+            // E-brake also scrubs speed
+            this.localVelocity.x *= Math.pow(eb.speedReduction, dt * 10);
+
+            // Set slide direction if not already sliding
+            if (!this.isSliding && Math.abs(this.steeringInput) > 0.2) {
+                this.slideDirection = Math.sign(this.steeringInput);
+            }
+        } else {
+            this.eBrakeActive = false;
+        }
+
+        // 7. E-brake recovery delay
+        if (this.eBrakeRecoveryTimer > 0) {
+            targetGrip -= eb.gripLoss * (this.eBrakeRecoveryTimer / eb.recoveryDelay) * 0.5;
+        }
+
+        // 8. Snap exit bonus (brief grip boost when exiting slide)
+        if (this.snapExitTimer > 0) {
+            targetGrip += g.snapGripBonus;
+            this.snapExitTimer -= dt;
+        }
+
+        // Clamp target grip
+        targetGrip = Math.max(g.minGrip, Math.min(1.0, targetGrip));
+
+        // Smooth transition (fast loss, slower recovery)
+        const lerpSpeed = targetGrip < this.r4Grip ? g.gripLossRate : g.gripRecoveryRate;
+        this.r4Grip = THREE.MathUtils.lerp(this.r4Grip, targetGrip, lerpSpeed * dt);
+
+        // Store previous sliding state for snap detection
+        this.wasSliding = this.isSliding;
+
+        // Determine slide state based on grip level
+        this.isSliding = this.r4Grip < g.slideThreshold;
+        this.isFullDrift = this.r4Grip < g.fullDriftThreshold;
+
+        // Detect slide exit for "snap" effect
+        if (this.wasSliding && !this.isSliding) {
+            // The R4 "snap" - car straightens and shoots forward
+            this.slideAngle *= g.snapAngleReduction;
+            this.snapExitTimer = g.snapDuration;
+            kartLog.debug('Slide snap exit', { slideAngle: this.slideAngle.toFixed(2) });
+        }
+
+        // Update legacy drift state for visual compatibility
+        if (this.isSliding) {
+            this.driftState = 'DRIFTING';
+            this.driftDirection = this.slideDirection;
+            this.driftAngle = this.slideAngle;
+        } else {
+            this.driftState = 'NONE';
+            this.driftDirection = 0;
+        }
+
+        // Update isDrifting flag for backwards compatibility
+        this.isDrifting = this.isSliding;
+    }
+
+    // Update slide angle with counter-steering control
+    updateSlideAngle(dt) {
+        const g = CONFIG.physics.grip;
+        const tp = CONFIG.physics.trackPhysics;
+        const eb = CONFIG.physics.eBrake;
+
+        if (!this.isSliding) {
+            // Not sliding - quickly return to zero (the "snap")
+            const snapRate = 12.0; // Faster snap back
+            this.slideAngle *= (1 - snapRate * dt);
+
+            // Kill tiny angles
+            if (Math.abs(this.slideAngle) < 0.01) {
+                this.slideAngle = 0;
+                this.slideDirection = 0;
+            }
+            return;
+        }
+
+        // Calculate target slide angle based on grip loss and steering
+        const gripLoss = 1 - this.r4Grip;
+
+        // Base target angle - only builds when actively steering into slide
+        let targetAngle = 0;
+        const steeringIntoSlide = this.steeringInput * this.slideDirection > 0;
+
+        if (steeringIntoSlide && Math.abs(this.steeringInput) > 0.1) {
+            // Steering into slide: build angle
+            targetAngle = this.slideDirection * gripLoss * 0.7;
+
+            // E-brake amplifies slide angle
+            if (this.eBrakeActive) {
+                targetAngle *= eb.slideAngleBoost;
+            }
+        }
+
+        // Counter-steering reduces slide angle (the skill element!)
+        const counterSteer = -this.steeringInput * this.slideDirection;
+        if (counterSteer > 0.1) {
+            // Active counter-steer: aggressively tighten the slide
+            this.slideAngle -= counterSteer * g.counterSteerRate * dt;
+
+            // Counter-steer can even flip the slide direction if strong enough
+            if (this.slideAngle * this.slideDirection < 0) {
+                this.slideAngle = 0;
+            }
+        } else if (Math.abs(this.steeringInput) < 0.1) {
+            // No steering input - slide naturally decays (helps recovery!)
+            this.slideAngle *= (1 - g.slideAngleDamping * dt);
+        } else if (steeringIntoSlide) {
+            // Steering into slide: build it up
+            this.slideAngle = THREE.MathUtils.lerp(this.slideAngle, targetAngle, g.slideAngleBuildRate * dt);
+        }
+
+        // R4-style yaw damping - always active, prevents wild oscillation
+        this.slideAngle *= (1 - tp.slideYawDamping * dt);
+
+        // Countersteer assist at extreme angles (more forgiving)
+        if (Math.abs(this.slideAngle) > 0.4) {
+            const assistForce = -Math.sign(this.slideAngle) * tp.slideCountersteerAssist * 2;
+            this.slideAngle += assistForce * dt;
+        }
+
+        // Clamp slide angle
+        this.slideAngle = THREE.MathUtils.clamp(this.slideAngle, -g.maxSlideAngle, g.maxSlideAngle);
+
+        // Update legacy driftAngle for visuals
+        this.driftAngle = this.slideAngle;
     }
 
     getMaxSpeed(mod) {
@@ -681,22 +927,19 @@ export class Kart {
         this.groundNormal.copy(this.trackFrame.normal);
     }
 
-    // Apply lateral grip in local frame with progressive slip model
+    // Apply lateral grip in local frame - uses R4 unified grip system
     applyLocalLateralGrip(dt) {
         const p = CONFIG.physics;
-        const tp = p.trackPhysics;
         const wt = p.weightTransfer;
         const bp = p.braking;
 
         if (!this.surfaceAttached) return;
 
-        // Start with slip-model grip
-        let gripMultiplier = this.currentGripMultiplier;
+        // Start with the R4 unified grip value (already accounts for speed, cornering, throttle state)
+        let gripMultiplier = this.r4Grip;
 
-        // Drift reduces rear grip significantly
-        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
-            gripMultiplier *= tp.driftRearGripMultiplier;
-        }
+        // Combine with slip-model grip for realistic tire behavior
+        gripMultiplier *= this.currentGripMultiplier;
 
         // Weight transfer affects grip
         // When braking (weight forward), rear has less grip = easier oversteer
@@ -705,9 +948,7 @@ export class Kart {
             gripMultiplier *= (1 - rearWeightLoss * wt.brakeRearGripLoss);
         }
 
-        // ===== BRAKE SLIDE GRIP LOSS =====
-        // When braking hard with slip, lateral grip drops significantly
-        // This makes the rear slide out under braking (R4/GTA feel)
+        // Brake slide grip loss (stacks with R4 grip system)
         if (this.isBrakingHard && this.brakeSlipAmount > 0) {
             const brakeSlideGripLoss = this.brakeSlipAmount * bp.brakeSlipGripLoss * bp.brakeRearSlideMultiplier;
             gripMultiplier *= (1 - brakeSlideGripLoss);
@@ -717,11 +958,16 @@ export class Kart {
         const lateralGrip = -this.localVelocity.z * p.gripCoefficient * gripMultiplier;
         this.localVelocity.z += lateralGrip * dt;
 
-        // ===== TRAIL BRAKING ROTATION =====
-        // Steering while braking hard induces rotation (rear comes around)
+        // Trail braking rotation - steering while braking hard induces rotation
         if (this.isBrakingHard && Math.abs(this.steeringInput) > 0.3) {
             const brakeSteerForce = this.steeringInput * this.brakeSlipAmount * bp.brakeSteerRotation * this.forwardSpeed * 0.01;
             this.localVelocity.z += brakeSteerForce * dt;
+        }
+
+        // During sliding, add lateral velocity based on slide angle (makes car move sideways)
+        if (this.isSliding && Math.abs(this.slideAngle) > 0.05) {
+            const slideForce = this.slideAngle * Math.abs(this.forwardSpeed) * 0.3;
+            this.localVelocity.z += slideForce * dt;
         }
     }
 
@@ -927,20 +1173,28 @@ export class Kart {
         }
     }
 
+    // LEGACY: Old Mario Kart style drift (only used in legacy physics path)
+    // The new R4 grip system is used in updateTrackPhysics() instead
     updateDriftState(input, dt, right) {
         const p = CONFIG.physics;
+        const tp = p.trackPhysics;
         const speed = Math.abs(this.forwardSpeed);
+
+        // Legacy hardcoded values (old drift system no longer in config)
+        const LEGACY_DRIFT_ENTRY_SPEED = 40;
+        const LEGACY_DRIFT_GRIP = 0.4;
+        const LEGACY_COUNTER_STEER = 0.6;
 
         switch (this.driftState) {
             case 'NONE':
                 // Check for drift initiation: drift button + steering + speed
-                if (input.drift && speed > p.driftEntrySpeed && Math.abs(this.steeringInput) > 0.5) {
+                if (input.drift && speed > LEGACY_DRIFT_ENTRY_SPEED && Math.abs(this.steeringInput) > 0.5) {
                     this.driftState = 'INITIATING';
                     this.driftDirection = Math.sign(this.steeringInput);
                     this.driftAngle = 0;
                     this.driftTime = 0;
                     this.driftBoostLevel = 0;
-                    kartLog.debug('Drift initiating', { direction: this.driftDirection, speed });
+                    kartLog.debug('Legacy drift initiating', { direction: this.driftDirection, speed });
                 }
                 break;
 
@@ -952,7 +1206,7 @@ export class Kart {
                 // Transition to full drift
                 if (Math.abs(this.driftAngle) > 0.3) {
                     this.driftState = 'DRIFTING';
-                    kartLog.debug('Drift active', { driftAngle: this.driftAngle });
+                    kartLog.debug('Legacy drift active', { driftAngle: this.driftAngle });
                 }
 
                 // Cancel if drift released early
@@ -963,31 +1217,21 @@ export class Kart {
 
             case 'DRIFTING':
                 this.driftTime += dt;
-                const tp = p.trackPhysics;
-
-                // Charge boost based on drift time
-                for (let i = 0; i < p.driftBoostLevels.length; i++) {
-                    if (this.driftTime >= p.driftBoostLevels[i]) {
-                        this.driftBoostLevel = i + 1;
-                    }
-                }
 
                 // Counter-steering affects drift angle
                 const counterSteer = -this.steeringInput * this.driftDirection;
                 if (counterSteer > 0) {
-                    // Active countersteer: tighten drift
-                    this.driftAngle -= counterSteer * p.driftCounterSteer * dt;
+                    this.driftAngle -= counterSteer * LEGACY_COUNTER_STEER * dt;
                 } else {
-                    // Steer into drift: widen drift angle
-                    this.driftAngle += Math.abs(this.steeringInput) * p.driftCounterSteer * dt * 0.5;
+                    this.driftAngle += Math.abs(this.steeringInput) * LEGACY_COUNTER_STEER * dt * 0.5;
                 }
 
-                // R4-style yaw damping: prevents oscillation, makes drift stable
-                this.driftAngle *= (1 - tp.driftYawDamping * dt);
+                // Yaw damping
+                this.driftAngle *= (1 - tp.slideYawDamping * dt);
 
-                // R4-style subtle countersteer assist at extreme angles
+                // Countersteer assist at extreme angles
                 if (Math.abs(this.driftAngle) > 0.5) {
-                    const assistForce = -Math.sign(this.driftAngle) * tp.driftCountersteerAssist;
+                    const assistForce = -Math.sign(this.driftAngle) * tp.slideCountersteerAssist;
                     this.driftAngle += assistForce * dt;
                 }
 
@@ -997,34 +1241,23 @@ export class Kart {
                 if (Math.abs(this.driftAngle) < minAngle) {
                     this.driftAngle = minAngle * this.driftDirection;
                 }
-
-                // Clamp drift angle
                 this.driftAngle = THREE.MathUtils.clamp(this.driftAngle, -maxAngle, maxAngle);
 
                 // Only apply world-space drift physics if using legacy system
                 if (right) {
-                    const lateralGripForce = -this.lateralSpeed * p.gripCoefficient * p.driftGripMultiplier;
+                    const lateralGripForce = -this.lateralSpeed * p.gripCoefficient * LEGACY_DRIFT_GRIP;
                     this.velocity.addScaledVector(right, lateralGripForce * dt);
                 }
 
                 // Exit conditions
-                if (!input.drift || speed < p.driftEntrySpeed * 0.4) {
+                if (!input.drift || speed < LEGACY_DRIFT_ENTRY_SPEED * 0.4) {
                     this.driftState = 'EXITING';
                 }
                 break;
 
             case 'EXITING':
-                // Apply boost if earned
-                if (this.driftBoostLevel > 0) {
-                    const level = this.driftBoostLevel - 1;
-                    this.boostPower = p.driftBoostPower[level];
-                    this.boostTimeRemaining = p.driftBoostDuration[level];
-                    kartLog.info('Drift boost activated', {
-                        level: this.driftBoostLevel,
-                        power: this.boostPower,
-                        duration: this.boostTimeRemaining
-                    });
-                }
+                // No boost in legacy mode (R4 style = skill preservation, not boost reward)
+                kartLog.debug('Legacy drift ended', { driftTime: this.driftTime });
 
                 // Reset drift state
                 this.driftState = 'NONE';
@@ -1061,12 +1294,13 @@ export class Kart {
         this.rotation += this.angularVelocity * dt;
     }
 
+    // LEGACY: Boost for legacy physics (used in updateLegacyPhysics)
     updateBoost(dt, forward) {
         if (this.boostTimeRemaining > 0) {
             this.boostTimeRemaining -= dt;
 
-            // Apply boost acceleration
-            const boostAccel = 200 * dt * (this.boostPower / CONFIG.physics.driftBoostPower[2]);
+            // Apply boost acceleration (max boost power = 50)
+            const boostAccel = 200 * dt * (this.boostPower / 50);
             this.velocity.addScaledVector(forward, boostAccel);
         } else {
             this.boostPower = 0;
@@ -1187,7 +1421,6 @@ export class Kart {
         // Update mesh position
         this.mesh.position.copy(this.position);
 
-        // Calculate visual yaw (add drift angle during drift)
         // Update orientation to align with terrain (uses KartVisuals)
         KartVisuals.updateOrientation(this, dt);
 
@@ -1195,9 +1428,9 @@ export class Kart {
         if (this.orientationQuat) {
             this.mesh.quaternion.copy(this.orientationQuat);
 
-            // Apply drift angle offset when drifting
-            if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
-                _driftQuat.setFromAxisAngle(_yAxis, this.driftAngle * 0.7);
+            // Apply slide angle offset when sliding (R4-style visual rotation)
+            if (this.isSliding && Math.abs(this.slideAngle) > 0.02) {
+                _driftQuat.setFromAxisAngle(_yAxis, this.slideAngle * 0.7);
                 this.mesh.quaternion.multiply(_driftQuat);
             }
         } else {
@@ -1234,6 +1467,21 @@ export class Kart {
         this.airTime = 0;
         this.timeSinceLastLaunch = 1;
 
+        // R4-style grip system state
+        this.throttleState = 'ON';
+        this.throttleLiftTime = 0;
+        this.brakeTapAmount = 0;
+        this.r4Grip = 1.0;
+        this.isSliding = false;
+        this.isFullDrift = false;
+        this.slideAngle = 0;
+        this.slideDirection = 0;
+        this.eBrakeActive = false;
+        this.eBrakeRecoveryTimer = 0;
+        this.snapExitTimer = 0;
+        this.wasSliding = false;
+
+        // Legacy drift state (for visual compatibility)
         this.driftState = 'NONE';
         this.driftDirection = 0;
         this.driftAngle = 0;

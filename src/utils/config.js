@@ -12,12 +12,12 @@ export const CONFIG = {
         reverseMaxSpeed: 25,
         accelerationForce: 180,
         brakeForce: 300,
-        coastDeceleration: 60,
+        coastDeceleration: 15,            // Reduced - cars coast longer like R4/GTA
 
         // Braking physics (R4/GTA style sliding)
         braking: {
-            maxBrakeForce: 350,           // Maximum braking force
-            minBrakeForce: 100,           // Minimum braking force at low speed
+            maxBrakeForce: 120,           // Maximum braking force (reduced for longer stops)
+            minBrakeForce: 40,            // Minimum braking force at low speed
             brakeSpeedFalloff: 0.4,       // Braking reduction at high speed (0-1)
             brakeFalloffStart: 30,        // Speed where falloff begins
             brakeSlipThreshold: 0.7,      // Speed ratio that starts causing slip
@@ -25,7 +25,8 @@ export const CONFIG = {
             brakeSlipBuildRate: 4.0,      // How fast brake slip builds up
             brakeSlipRecoveryRate: 8.0,   // How fast brake slip recovers
             brakeSteerRotation: 0.3,      // Rotation from steering while braking
-            brakeRearSlideMultiplier: 1.5 // Extra rear grip loss during slide
+            brakeRearSlideMultiplier: 1.5, // Extra rear grip loss during slide
+            reverseThreshold: 2           // Speed below which brake becomes reverse
         },
 
         // Steering (more forgiving)

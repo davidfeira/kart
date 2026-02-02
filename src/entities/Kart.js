@@ -95,6 +95,10 @@ export class Kart {
         this.currentSlipAngle = 0;      // Smoothed tire slip angle
         this.currentGripMultiplier = 1; // Grip from slip model
 
+        // Brake sliding state (R4/GTA style)
+        this.brakeSlipAmount = 0;       // 0 = full grip, 1 = wheels locked/sliding
+        this.isBrakingHard = false;     // Flag for brake slide detection
+
         // Collision
         this.boundingRadius = 1.2;
 
@@ -682,6 +686,7 @@ export class Kart {
         const p = CONFIG.physics;
         const tp = p.trackPhysics;
         const wt = p.weightTransfer;
+        const bp = p.braking;
 
         if (!this.surfaceAttached) return;
 
@@ -700,14 +705,30 @@ export class Kart {
             gripMultiplier *= (1 - rearWeightLoss * wt.brakeRearGripLoss);
         }
 
+        // ===== BRAKE SLIDE GRIP LOSS =====
+        // When braking hard with slip, lateral grip drops significantly
+        // This makes the rear slide out under braking (R4/GTA feel)
+        if (this.isBrakingHard && this.brakeSlipAmount > 0) {
+            const brakeSlideGripLoss = this.brakeSlipAmount * bp.brakeSlipGripLoss * bp.brakeRearSlideMultiplier;
+            gripMultiplier *= (1 - brakeSlideGripLoss);
+        }
+
         // Apply lateral grip force to reduce sideways velocity
         const lateralGrip = -this.localVelocity.z * p.gripCoefficient * gripMultiplier;
         this.localVelocity.z += lateralGrip * dt;
+
+        // ===== TRAIL BRAKING ROTATION =====
+        // Steering while braking hard induces rotation (rear comes around)
+        if (this.isBrakingHard && Math.abs(this.steeringInput) > 0.3) {
+            const brakeSteerForce = this.steeringInput * this.brakeSlipAmount * bp.brakeSteerRotation * this.forwardSpeed * 0.01;
+            this.localVelocity.z += brakeSteerForce * dt;
+        }
     }
 
     // Apply acceleration in local frame
     applyLocalAcceleration(input, dt, mod, effectiveMaxSpeed) {
         const p = CONFIG.physics;
+        const bp = p.braking;
 
         // Acceleration curve - stronger at low speed
         const getAccelCurve = (speed) => {
@@ -721,10 +742,55 @@ export class Kart {
             const accelMultiplier = getAccelCurve(forwardSpeed);
             const accelForce = p.accelerationForce * mod.acceleration * accelMultiplier * dt;
             this.localVelocity.x += accelForce;
+
+            // Recover brake slip when accelerating
+            this.brakeSlipAmount = Math.max(0, this.brakeSlipAmount - bp.brakeSlipRecoveryRate * dt);
+            this.isBrakingHard = false;
+
         } else if (input.backward) {
-            if (forwardSpeed > 5) {
-                // Braking
-                this.localVelocity.x -= p.brakeForce * dt;
+            if (forwardSpeed > bp.reverseThreshold) {
+                // ===== R4/GTA STYLE BRAKING =====
+
+                // 1. Speed-dependent brake effectiveness
+                // Braking is less effective at high speed (simulates brake fade)
+                let speedFactor = 1.0;
+                if (forwardSpeed > bp.brakeFalloffStart) {
+                    const overSpeed = (forwardSpeed - bp.brakeFalloffStart) / (effectiveMaxSpeed - bp.brakeFalloffStart);
+                    speedFactor = 1.0 - (Math.min(overSpeed, 1.0) * bp.brakeSpeedFalloff);
+                }
+
+                // 2. Grip-limited braking force
+                const gripFactor = this.currentGripMultiplier;
+
+                // 3. Calculate brake slip (wheel lock tendency)
+                const brakeIntensity = forwardSpeed / effectiveMaxSpeed;
+
+                if (brakeIntensity > bp.brakeSlipThreshold) {
+                    // Build up brake slip - wheels starting to lock
+                    const slipBuildRate = (brakeIntensity - bp.brakeSlipThreshold) / (1 - bp.brakeSlipThreshold);
+                    this.brakeSlipAmount = Math.min(1, this.brakeSlipAmount + slipBuildRate * bp.brakeSlipBuildRate * dt);
+                    this.isBrakingHard = true;
+                } else {
+                    // Recover from slip
+                    this.brakeSlipAmount = Math.max(0, this.brakeSlipAmount - bp.brakeSlipRecoveryRate * dt);
+                    this.isBrakingHard = false;
+                }
+
+                // 4. Brake slip reduces grip (simulates locked wheels)
+                const slipGripPenalty = 1 - (this.brakeSlipAmount * bp.brakeSlipGripLoss);
+
+                // 5. Calculate final brake force
+                const baseBrake = bp.minBrakeForce + (bp.maxBrakeForce - bp.minBrakeForce) * speedFactor;
+                const effectiveBrake = baseBrake * gripFactor * slipGripPenalty;
+
+                // 6. Apply braking deceleration
+                this.localVelocity.x -= effectiveBrake * dt;
+
+                // Prevent going negative
+                if (this.localVelocity.x < 0) {
+                    this.localVelocity.x = 0;
+                }
+
             } else {
                 // Reverse
                 const reverseForce = p.accelerationForce * 0.6 * dt;
@@ -733,11 +799,19 @@ export class Kart {
                 if (this.localVelocity.x < -p.reverseMaxSpeed) {
                     this.localVelocity.x = -p.reverseMaxSpeed;
                 }
+
+                // No slip during reverse
+                this.brakeSlipAmount = Math.max(0, this.brakeSlipAmount - bp.brakeSlipRecoveryRate * dt);
+                this.isBrakingHard = false;
             }
         } else if (forwardSpeed > 0 && this.surfaceAttached) {
             // Coast deceleration
             this.localVelocity.x -= p.coastDeceleration * dt;
             if (this.localVelocity.x < 0) this.localVelocity.x = 0;
+
+            // Recover brake slip when coasting
+            this.brakeSlipAmount = Math.max(0, this.brakeSlipAmount - bp.brakeSlipRecoveryRate * dt);
+            this.isBrakingHard = false;
         }
     }
 
@@ -1183,6 +1257,10 @@ export class Kart {
         this.weightFront = 0.5;
         this.currentSlipAngle = 0;
         this.currentGripMultiplier = 1;
+
+        // Reset brake sliding state
+        this.brakeSlipAmount = 0;
+        this.isBrakingHard = false;
 
         // Reset orientation quaternions
         if (this.orientationQuat) {

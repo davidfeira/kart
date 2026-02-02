@@ -300,14 +300,18 @@ export class Game {
 
         if (collision.collision) {
             this.kart.applyCollision(collision.normal, collision.penetration);
+            // Add camera shake on collision based on speed
+            const impactIntensity = Math.abs(this.kart.forwardSpeed) * 0.001;
+            this.cameraController.addShake(Math.min(impactIntensity, 0.1));
         }
 
-        // Update camera with boost shake effect
+        // Update camera with boost shake effect and body dynamics
         this.cameraController.update(
             this.kart.position,
             this.kart.rotation,
             this.kart.forwardSpeed,
-            this.kart.boostTimeRemaining > 0
+            this.kart.boostTimeRemaining > 0,
+            this.kart  // Pass kart for body roll, tilt, etc.
         );
 
         // Check checkpoints

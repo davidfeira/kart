@@ -85,6 +85,16 @@ export class Kart {
         this.pitch = 0;
         this.roll = 0;
 
+        // Body dynamics state (R4-style arcade feel)
+        this.bodyRoll = 0;              // Current body roll angle
+        this.bodyPitch = 0;             // Current body pitch angle
+        this.lateralG = 0;              // Lateral acceleration for effects
+        this.longitudinalG = 0;         // Forward/back acceleration
+        this.lastForwardSpeed = 0;      // For calculating acceleration
+        this.weightFront = 0.5;         // Weight distribution (0.5 = balanced)
+        this.currentSlipAngle = 0;      // Smoothed tire slip angle
+        this.currentGripMultiplier = 1; // Grip from slip model
+
         // Collision
         this.boundingRadius = 1.2;
 
@@ -258,6 +268,10 @@ export class Kart {
         // Update derived speed values
         this.forwardSpeed = this.localVelocity.x;
         this.speed = this.forwardSpeed;
+
+        // ===== BODY DYNAMICS (R4-style feel) =====
+        this.updateBodyDynamics(dt);
+        this.updateSlipPhysics(dt);
     }
 
     // Legacy physics for backwards compatibility
@@ -350,6 +364,107 @@ export class Kart {
         } else {
             this.boostPower = 0;
         }
+    }
+
+    // R4-style body dynamics - makes car feel weighty and exciting
+    updateBodyDynamics(dt) {
+        const bd = CONFIG.physics.bodyDynamics;
+        const wt = CONFIG.physics.weightTransfer;
+        const speed = Math.abs(this.forwardSpeed);
+
+        // ===== CALCULATE G-FORCES =====
+
+        // Lateral G from turning (steering angle * speed = centripetal acceleration)
+        // Higher speed + more steering = more lateral G
+        const steeringG = this.steeringAngle * speed * 0.02;
+
+        // Smooth lateral G
+        const gLerpRate = 1 - Math.exp(-12 * dt);
+        this.lateralG = THREE.MathUtils.lerp(this.lateralG, steeringG, gLerpRate);
+
+        // Longitudinal G from acceleration/braking
+        const accel = (this.forwardSpeed - this.lastForwardSpeed) / Math.max(dt, 0.001);
+        this.longitudinalG = THREE.MathUtils.lerp(this.longitudinalG, accel * 0.01, gLerpRate);
+        this.lastForwardSpeed = this.forwardSpeed;
+
+        // ===== BODY ROLL =====
+        // Base roll from lateral G (lean outward from turn)
+        let targetRoll = -this.lateralG * bd.rollGSensitivity * 100;
+
+        // R4 MAGIC: During drift, car leans INTO the slide (opposite to realistic physics)
+        // This creates that signature arcade racing feel
+        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
+            // Lean into drift direction
+            const driftLean = this.driftDirection * bd.driftRollBonus;
+            // Also add roll from the drift angle itself
+            const angleRoll = this.driftAngle * 0.3;
+            targetRoll = driftLean + angleRoll;
+        }
+
+        // Clamp and smooth roll
+        targetRoll = THREE.MathUtils.clamp(targetRoll, -bd.maxBodyRoll, bd.maxBodyRoll);
+        const rollLerp = 1 - Math.exp(-bd.bodyRollSpeed * dt);
+        this.bodyRoll = THREE.MathUtils.lerp(this.bodyRoll, targetRoll, rollLerp);
+
+        // ===== BODY PITCH =====
+        let targetPitch = 0;
+
+        if (this.surfaceAttached || this.isGrounded) {
+            // Pitch from acceleration (nose up when accelerating, down when braking)
+            targetPitch = -this.longitudinalG * bd.pitchAccelSensitivity * 100;
+        } else {
+            // In air: nose tips down gradually (looks more dynamic)
+            targetPitch = Math.min(this.airTime * bd.airPitchRate, bd.maxAirPitch);
+        }
+
+        // Clamp and smooth pitch
+        targetPitch = THREE.MathUtils.clamp(targetPitch, -bd.maxBodyPitch, bd.maxBodyPitch);
+        const pitchLerp = 1 - Math.exp(-bd.bodyPitchSpeed * dt);
+        this.bodyPitch = THREE.MathUtils.lerp(this.bodyPitch, targetPitch, pitchLerp);
+
+        // ===== WEIGHT TRANSFER =====
+        // Braking shifts weight forward, accelerating shifts it back
+        let targetWeight = 0.5; // Balanced
+
+        if (this.longitudinalG < -0.1) {
+            // Braking - weight shifts forward
+            targetWeight = 0.5 + Math.min(-this.longitudinalG * 2, wt.maxTransfer);
+        } else if (this.longitudinalG > 0.1) {
+            // Accelerating - weight shifts back
+            targetWeight = 0.5 - Math.min(this.longitudinalG * 1.5, wt.maxTransfer);
+        }
+
+        const weightLerp = 1 - Math.exp(-wt.transferRate * dt);
+        this.weightFront = THREE.MathUtils.lerp(this.weightFront, targetWeight, weightLerp);
+    }
+
+    // Progressive tire slip model (Pacejka-lite)
+    updateSlipPhysics(dt) {
+        const sp = CONFIG.physics.slipPhysics;
+
+        // Calculate slip angle from lateral vs forward velocity
+        const lateralVel = Math.abs(this.localVelocity.z);
+        const forwardVel = Math.abs(this.localVelocity.x) + 0.1; // Prevent div by zero
+        const rawSlipAngle = Math.atan2(lateralVel, forwardVel);
+
+        // Smooth slip angle changes
+        const slipLerp = 1 - Math.exp(-sp.slipSmoothRate * dt);
+        this.currentSlipAngle = THREE.MathUtils.lerp(this.currentSlipAngle, rawSlipAngle, slipLerp);
+
+        // Pacejka-lite grip curve
+        // Grip increases linearly until peak, then falls off
+        const slipRatio = this.currentSlipAngle / sp.peakSlipAngle;
+        let gripCurve;
+
+        if (slipRatio < 1) {
+            // Below peak - grip increases with slip (gives progressive feel)
+            gripCurve = 0.7 + slipRatio * 0.3;
+        } else {
+            // Past peak - grip drops but never to zero
+            gripCurve = 1.0 - (slipRatio - 1) * sp.slipFalloff;
+        }
+
+        this.currentGripMultiplier = Math.max(sp.minGrip, gripCurve);
     }
 
     getMaxSpeed(mod) {
@@ -562,18 +677,27 @@ export class Kart {
         this.groundNormal.copy(this.trackFrame.normal);
     }
 
-    // Apply lateral grip in local frame
+    // Apply lateral grip in local frame with progressive slip model
     applyLocalLateralGrip(dt) {
         const p = CONFIG.physics;
         const tp = p.trackPhysics;
+        const wt = p.weightTransfer;
 
         if (!this.surfaceAttached) return;
 
-        let gripMultiplier = 1.0;
+        // Start with slip-model grip
+        let gripMultiplier = this.currentGripMultiplier;
 
         // Drift reduces rear grip significantly
         if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
-            gripMultiplier = tp.driftRearGripMultiplier;
+            gripMultiplier *= tp.driftRearGripMultiplier;
+        }
+
+        // Weight transfer affects grip
+        // When braking (weight forward), rear has less grip = easier oversteer
+        if (this.weightFront > 0.55) {
+            const rearWeightLoss = (this.weightFront - 0.5) / wt.maxTransfer;
+            gripMultiplier *= (1 - rearWeightLoss * wt.brakeRearGripLoss);
         }
 
         // Apply lateral grip force to reduce sideways velocity
@@ -1049,6 +1173,25 @@ export class Kart {
         this.forwardSpeed = 0;
         this.lateralSpeed = 0;
         this.isDrifting = false;
+
+        // Reset body dynamics state
+        this.bodyRoll = 0;
+        this.bodyPitch = 0;
+        this.lateralG = 0;
+        this.longitudinalG = 0;
+        this.lastForwardSpeed = 0;
+        this.weightFront = 0.5;
+        this.currentSlipAngle = 0;
+        this.currentGripMultiplier = 1;
+
+        // Reset orientation quaternions
+        if (this.orientationQuat) {
+            this.orientationQuat.identity();
+        }
+        if (this.baseOrientationQuat) {
+            this.baseOrientationQuat.identity();
+        }
+
         this.mesh.position.copy(position);
         this.mesh.rotation.set(0, rotation, 0);
     }

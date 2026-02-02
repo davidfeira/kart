@@ -63,6 +63,35 @@ export const CONFIG = {
             driftRearGripMultiplier: 0.25, // Rear grip during drift
             trackSearchRadius: 0.1,        // Initial binary search radius
             trackSearchIterations: 8       // Max iterations for refinement
+        },
+
+        // Body dynamics (arcade aggressive - R4 style)
+        bodyDynamics: {
+            maxBodyRoll: 0.12,             // ~7 degrees max roll - visible but not extreme
+            bodyRollSpeed: 18,             // Snappy response and recovery
+            rollGSensitivity: 0.008,       // Roll per unit of lateral G (reduced)
+            driftRollBonus: 0.10,          // Extra inward roll when drifting (R4 style)
+            maxBodyPitch: 0.10,            // ~6 degrees max pitch
+            bodyPitchSpeed: 12,            // Snappier pitch response
+            pitchAccelSensitivity: 0.0006, // Pitch per unit of acceleration
+            airPitchRate: 0.3,             // Nose-down rate when airborne
+            maxAirPitch: 0.15              // Max nose-down angle in air
+        },
+
+        // Weight transfer (affects grip distribution)
+        weightTransfer: {
+            transferRate: 4.0,             // How fast weight shifts
+            maxTransfer: 0.35,             // Max weight shift (0.5 = all on one axle)
+            brakeRearGripLoss: 0.3,        // Rear grip reduction when braking
+            accelFrontGripLoss: 0.15       // Front grip reduction when accelerating
+        },
+
+        // Slip physics (Pacejka-lite tire model)
+        slipPhysics: {
+            peakSlipAngle: 0.12,           // Radians where grip peaks
+            slipFalloff: 0.5,              // How much grip drops past peak
+            minGrip: 0.25,                 // Minimum grip even at max slip
+            slipSmoothRate: 15             // How fast slip angle changes
         }
     },
     camera: {
@@ -72,9 +101,18 @@ export const CONFIG = {
         positionDamping: 0.05,
         rotationDamping: 0.04,
         baseFov: 65,
-        maxFov: 80,
-        fovSpeedScale: 0.3,
-        boostShakeIntensity: 0.1
+        maxFov: 85,
+        fovSpeedScale: 0.5,              // More dramatic FOV change with speed
+        boostShakeIntensity: 0.12,
+
+        // Camera juice (R4-style)
+        lagFactor: 0.06,                 // Camera trails behind car
+        lagRecoverySpeed: 3.0,           // How fast lag catches up
+        tiltFactor: 0.25,                // Camera tilts with car roll
+        maxTilt: 0.08,                   // Max camera tilt angle
+        landingShakeIntensity: 0.08,     // Shake on landing
+        shakeDecay: 8,                   // How fast shake fades
+        driftCameraOffset: 0.8           // Camera shifts outward during drift
     },
     race: {
         totalLaps: 3,

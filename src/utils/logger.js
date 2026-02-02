@@ -37,6 +37,8 @@ const MODULE_CATEGORY_MAP = {
     'Input': LOG_CATEGORIES.GAME,
     'Physics': LOG_CATEGORIES.PHYSICS,
     'Kart': LOG_CATEGORIES.PHYSICS,
+    'KartVisuals': LOG_CATEGORIES.PHYSICS,
+    'KartFactory': LOG_CATEGORIES.PHYSICS,
     'Track': LOG_CATEGORIES.PHYSICS,
     'Collision': LOG_CATEGORIES.PHYSICS,
     'Network': LOG_CATEGORIES.NETWORK,
@@ -57,6 +59,17 @@ class LoggerCore {
         this._batchTimeout = null;
         this._batchDelay = 100; // ms
         this._enableConsole = true; // Set to false in production
+
+        // Dev mode: detect if running on localhost (dev server)
+        this._devMode = typeof window !== 'undefined' &&
+            window.location.hostname === 'localhost';
+        this._serverLogBuffer = {};
+        this._serverLogTimeout = null;
+        this._serverLogDelay = 500; // batch logs to server every 500ms
+
+        if (this._devMode) {
+            console.log('[Logger] Dev mode detected - logs will be written to /logs');
+        }
 
         // Try to restore logs from localStorage
         this._restoreFromStorage();
@@ -138,6 +151,48 @@ class LoggerCore {
 
         // Batch persist to storage
         this._schedulePersist();
+
+        // In dev mode, also send to server for file logging
+        if (this._devMode) {
+            this._scheduleServerLog(category, logEntry);
+        }
+    }
+
+    /**
+     * Schedule batched log send to dev server
+     */
+    _scheduleServerLog(category, entry) {
+        if (!this._serverLogBuffer[category]) {
+            this._serverLogBuffer[category] = [];
+        }
+        this._serverLogBuffer[category].push(entry);
+
+        if (this._serverLogTimeout) return;
+
+        this._serverLogTimeout = setTimeout(() => {
+            this._flushServerLogs();
+            this._serverLogTimeout = null;
+        }, this._serverLogDelay);
+    }
+
+    /**
+     * Send buffered logs to dev server
+     */
+    async _flushServerLogs() {
+        for (const [category, entries] of Object.entries(this._serverLogBuffer)) {
+            if (entries.length === 0) continue;
+
+            try {
+                await fetch('/log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ category, entries })
+                });
+            } catch (e) {
+                // Server might not be running - that's OK
+            }
+        }
+        this._serverLogBuffer = {};
     }
 
     /**
@@ -291,8 +346,29 @@ class LoggerCore {
 // Singleton instance
 const Logger = new LoggerCore();
 
+// Flush logs when page unloads (dev mode)
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        if (Logger._devMode && Object.keys(Logger._serverLogBuffer).length > 0) {
+            // Use sendBeacon for reliable delivery on page close
+            for (const [category, entries] of Object.entries(Logger._serverLogBuffer)) {
+                if (entries.length === 0) continue;
+                navigator.sendBeacon('/log', JSON.stringify({ category, entries }));
+            }
+        }
+    });
+}
+
+// Pre-configured loggers for common modules
+const PhysicsLog = Logger.getLogger('Physics');
+const KartLog = Logger.getLogger('Kart');
+const TrackLog = Logger.getLogger('Track');
+const GameLog = Logger.getLogger('Game');
+const InputLog = Logger.getLogger('Input');
+
 // Convenience exports
 export { Logger, LOG_LEVELS, LOG_CATEGORIES };
+export { PhysicsLog, KartLog, TrackLog, GameLog, InputLog };
 
 // Default export for simple import
 export default Logger;

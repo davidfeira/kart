@@ -16,22 +16,23 @@
 
 ### Directory Structure
 
-**Current state:** All game code is in `index.html` (~2750 lines). The structure below is the TARGET for future modularization.
+**Current state:** Code is modularized across 14 ES module files in `src/`. Entry point `index.html` is a thin shell (~141 lines).
 
 ```
 mario-kart-clone/
-├── src/                # TARGET: Future modular structure
-│   ├── core/           # Engine, game loop, scene management
-│   ├── entities/       # Karts, items, obstacles
-│   ├── systems/        # Physics, collision, input handling
-│   ├── tracks/         # Track definitions and geometry
-│   ├── ui/             # HUD, menus, overlays
-│   └── utils/          # Helpers, constants, math utilities
-├── assets/             # Models, textures, audio
+├── src/
+│   ├── core/           # Game.js, CameraController.js, TrackFrame.js
+│   ├── entities/       # Kart.js, KartFactory.js, kartTypes.js
+│   ├── systems/        # InputManager.js, CheckpointManager.js
+│   ├── tracks/         # TrackGenerator.js, trackPresets.js
+│   ├── ui/             # MenuManager.js, HUDController.js
+│   └── utils/          # logger.js, config.js
 ├── docs/               # Project documentation (keep updated!)
-├── logs/               # Centralized logging output
-├── index.html          # CURRENT: All game code lives here
-├── style.css
+├── logs/               # Dev mode logging output
+├── server.js           # Dev server for logging (node server.js)
+├── devmode.bat         # Launches dev server + browser
+├── index.html          # Thin entry point (HTML + bootstrap)
+├── style.css           # All styles including mobile
 └── CLAUDE.md
 ```
 
@@ -40,13 +41,23 @@ mario-kart-clone/
 ### Centralized Logging
 All logs go to the `logs/` folder. Do not log to console in production code.
 
+**IMPORTANT: NEVER use `console.log()` directly for debugging.**
+Always use the Logger module so logs are properly saved to /logs/ folder when running in dev mode.
+
 ### Logger Module
-The logger is currently embedded in `index.html`. Future: extract to `src/utils/logger.js`. It should:
-- Writes to files in `logs/` directory
-- Includes timestamps
-- Includes source file/module name
+The logger lives in `src/utils/logger.js`. Features:
+- Writes to `logs/` directory when running via `devmode.bat`
+- Includes timestamps and source module name
 - Supports log levels: DEBUG, INFO, WARN, ERROR
 - Batches writes for performance
+- Falls back to console when not in dev mode
+
+Usage:
+```javascript
+import { Logger } from './src/utils/logger.js';
+const log = Logger.getLogger('ModuleName');
+log.info('Message', { data: value });
+```
 
 ### Log File Convention
 - `logs/game.log` - General game events

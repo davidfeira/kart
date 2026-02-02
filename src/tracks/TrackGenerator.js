@@ -318,11 +318,46 @@ export class TrackGenerator {
         frame.position.x += flatBinormal.x * lateralOffset;
         frame.position.z += flatBinormal.z * lateralOffset;
 
-        // Add surface elevation to match track mesh
-        // TrackGeometry adds 0.05 to all vertices, plus we add a small buffer
-        // to keep car wheels above the visual surface
-        const surfaceElevation = 0.25;
-        frame.position.y += surfaceElevation;
+        // Calculate surface height matching TrackGeometry's banking formula
+        const halfWidth = this.trackWidth / 2;
+        const normalizedLateral = THREE.MathUtils.clamp(lateralOffset / halfWidth, -1, 1);
+
+        // Compute signed curvature matching TrackGeometry's formula exactly:
+        // Uses normalized direction vectors between consecutive points
+        const pBehind = this.trackPath.getPointAt(tBefore);
+        const pCurrent = this.trackPath.getPointAt(frame.t);
+        const pAheadCurve = this.trackPath.getPointAt(tAfter);
+
+        const v1 = new THREE.Vector3().subVectors(pCurrent, pBehind).normalize();
+        const v2 = new THREE.Vector3().subVectors(pAheadCurve, pCurrent).normalize();
+        const signedCurvature = v1.x * v2.z - v1.z * v2.x;  // Y component of cross product
+
+        // Banking height at the elevated edge (matches TrackGeometry formula)
+        const bankingHeight = Math.abs(signedCurvature) * halfWidth * 0.4;
+
+        // Base mesh elevation (TrackGeometry adds 0.05 to all vertices)
+        const baseElevation = 0.05;
+
+        // Interpolate banking height based on lateral position
+        let heightFromBanking = 0;
+        const bankingCurvatureThreshold = 0.02;
+
+        if (Math.abs(signedCurvature) > bankingCurvatureThreshold) {
+            if (signedCurvature > 0) {
+                // Right turn - outer edge (+lateral) is higher
+                const t = (normalizedLateral + 1) / 2;  // 0 at inner, 1 at outer
+                heightFromBanking = bankingHeight * t;
+            } else {
+                // Left turn - inner edge (-lateral) is higher
+                const t = (-normalizedLateral + 1) / 2;  // 1 at inner, 0 at outer
+                heightFromBanking = bankingHeight * t;
+            }
+        }
+
+        // Car clearance above track surface
+        const carClearance = 0.2;
+
+        frame.position.y += baseElevation + heightFromBanking + carClearance;
 
         return frame;
     }

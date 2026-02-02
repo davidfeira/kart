@@ -17,6 +17,10 @@ import * as KartVisuals from './KartVisuals.js';
 
 const kartLog = Logger.getLogger('Kart');
 
+// Reusable objects for orientation calculations (avoid GC)
+const _driftQuat = new THREE.Quaternion();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+
 export class Kart {
     constructor(type, scene) {
         this.type = type;
@@ -962,18 +966,22 @@ export class Kart {
         this.mesh.position.copy(this.position);
 
         // Calculate visual yaw (add drift angle during drift)
-        let visualYaw = this.rotation;
-        if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
-            visualYaw += this.driftAngle * 0.7;
-        }
-
-        // Update orientation with pitch and roll (uses KartVisuals)
+        // Update orientation to align with terrain (uses KartVisuals)
         KartVisuals.updateOrientation(this, dt);
 
-        this.mesh.rotation.order = 'YXZ';
-        this.mesh.rotation.y = visualYaw;
-        this.mesh.rotation.x = this.pitch;
-        this.mesh.rotation.z = this.roll;
+        // Apply quaternion-based orientation
+        if (this.orientationQuat) {
+            this.mesh.quaternion.copy(this.orientationQuat);
+
+            // Apply drift angle offset when drifting
+            if (this.driftState === 'DRIFTING' || this.driftState === 'INITIATING') {
+                _driftQuat.setFromAxisAngle(_yAxis, this.driftAngle * 0.7);
+                this.mesh.quaternion.multiply(_driftQuat);
+            }
+        } else {
+            // Fallback to simple rotation
+            this.mesh.rotation.set(0, this.rotation, 0);
+        }
 
         // Animate wheels, suspension, and particles (uses KartVisuals)
         KartVisuals.updateSuspension(this, dt);

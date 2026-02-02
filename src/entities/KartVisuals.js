@@ -320,77 +320,65 @@ export function updateSparkParticles(particles, kart, dt) {
     particles.geometry.attributes.size.needsUpdate = true;
 }
 
-// Debug logging counter for orientation
-let orientDebugCounter = 0;
+// Reusable objects for orientation calculations (avoid GC)
+const _targetQuat = new THREE.Quaternion();
+const _up = new THREE.Vector3();
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _matrix = new THREE.Matrix4();
 
 /**
- * Updates kart pitch and roll based on track surface and movement
+ * Updates kart orientation to align with terrain surface using quaternions
+ * Properly aligns car's up vector to terrain normal while preserving heading
  */
 export function updateOrientation(kart, dt) {
-    orientDebugCounter++;
-    const shouldLog = orientDebugCounter % 60 === 0;
+    // Initialize orientation quaternion if not present
+    if (!kart.orientationQuat) {
+        kart.orientationQuat = new THREE.Quaternion();
+    }
+
+    let terrainNormal;
+    let lerpFactor;
 
     if (kart.surfaceAttached && kart.trackFrame) {
-        // Calculate pitch from car's forward direction vs track normal
-        const forward = kart.getCarForward();
-
-        // Pitch: how much is the car tilted forward/back relative to ground
-        // Only use the component that's actually slope-related (not banking noise)
-        const slopeDot = -(forward.x * kart.trackFrame.normal.x + forward.z * kart.trackFrame.normal.z);
-        // Reduce pitch effect - was too dramatic
-        const targetPitch = Math.asin(THREE.MathUtils.clamp(slopeDot, -0.5, 0.5)) * 0.7;
-
-        // Roll: ONLY from significant track banking, NOT from turning or flat ground noise
-        // Track reports constant 0.3 banking even on flat ground - need higher threshold
-        const bankingThreshold = 0.35; // ~20 degrees - filters out the 0.3 noise
-        let targetRoll = 0;
-
-        if (shouldLog) {
-            log.debug('Banking check', {
-                banking: kart.trackFrame.banking.toFixed(4),
-                threshold: bankingThreshold,
-                currentRoll: kart.roll.toFixed(4)
-            });
-        }
-
-        if (Math.abs(kart.trackFrame.banking) > bankingThreshold) {
-            targetRoll = kart.trackFrame.banking * 0.4;
-            if (shouldLog) {
-                log.debug('Banking ABOVE THRESHOLD', { targetRoll: targetRoll.toFixed(4) });
-            }
-        }
-
-        // Clamp to reasonable values
-        targetRoll = THREE.MathUtils.clamp(targetRoll, -0.25, 0.25);
-
-        // Smooth interpolation
-        kart.pitch = THREE.MathUtils.lerp(kart.pitch, targetPitch, 1 - Math.exp(-12 * dt));
-        kart.roll = THREE.MathUtils.lerp(kart.roll, targetRoll, 1 - Math.exp(-10 * dt));
-    } else if (kart.isGrounded) {
-        // Fallback to old ground normal method if no track frame
-        const forward = new THREE.Vector3(Math.sin(kart.rotation), 0, Math.cos(kart.rotation));
-        const slopeDot = forward.x * kart.groundNormal.x + forward.z * kart.groundNormal.z;
-        const targetPitch = -Math.asin(THREE.MathUtils.clamp(slopeDot, -0.8, 0.8)) * 0.8;
-
-        // No turn-induced roll - only significant slope-based roll
-        // Calculate roll from the ground normal's sideways tilt
-        const right = new THREE.Vector3(Math.cos(kart.rotation), 0, -Math.sin(kart.rotation));
-        const bankDot = right.x * kart.groundNormal.x + right.z * kart.groundNormal.z;
-
-        // Add threshold to ignore flat ground noise
-        const bankingThreshold = 0.05;
-        let targetRoll = 0;
-        if (Math.abs(bankDot) > bankingThreshold) {
-            targetRoll = THREE.MathUtils.clamp(Math.asin(bankDot) * 0.4, -0.25, 0.25);
-        }
-
-        kart.pitch = THREE.MathUtils.lerp(kart.pitch, targetPitch, 1 - Math.exp(-10 * dt));
-        kart.roll = THREE.MathUtils.lerp(kart.roll, targetRoll, 1 - Math.exp(-8 * dt));
+        terrainNormal = kart.trackFrame.normal;
+        lerpFactor = 1 - Math.exp(-10 * dt);
+    } else if (kart.isGrounded && kart.groundNormal) {
+        terrainNormal = kart.groundNormal;
+        lerpFactor = 1 - Math.exp(-8 * dt);
     } else {
-        // In air, slowly return to level
-        kart.pitch = THREE.MathUtils.lerp(kart.pitch, 0, 1 - Math.exp(-2 * dt));
-        kart.roll = THREE.MathUtils.lerp(kart.roll, 0, 1 - Math.exp(-2 * dt));
+        // In air - align to world up
+        terrainNormal = _up.set(0, 1, 0);
+        lerpFactor = 1 - Math.exp(-2 * dt);
     }
+
+    // Get car's heading (yaw rotation)
+    const heading = kart.rotation;
+
+    // Build target orientation from terrain normal and heading
+    // Up vector is the terrain normal
+    _up.copy(terrainNormal).normalize();
+
+    // Forward vector starts as the car's heading direction (projected onto XZ plane)
+    _forward.set(Math.sin(heading), 0, Math.cos(heading));
+
+    // Project forward onto the terrain plane (remove component along normal)
+    const forwardDotUp = _forward.dot(_up);
+    _forward.x -= _up.x * forwardDotUp;
+    _forward.y -= _up.y * forwardDotUp;
+    _forward.z -= _up.z * forwardDotUp;
+    _forward.normalize();
+
+    // Right vector is perpendicular to both up and forward
+    _right.crossVectors(_up, _forward).normalize();
+
+    // Build rotation matrix from basis vectors (right, up, forward)
+    // Three.js uses column-major matrices
+    _matrix.makeBasis(_right, _up, _forward);
+    _targetQuat.setFromRotationMatrix(_matrix);
+
+    // Smooth interpolation to target orientation
+    kart.orientationQuat.slerp(_targetQuat, lerpFactor);
 }
 
 /**

@@ -14,6 +14,7 @@ import { CheckpointManager } from '../systems/CheckpointManager.js';
 import { CameraController } from './CameraController.js';
 import { HUDController } from '../ui/HUDController.js';
 import { MenuManager } from '../ui/MenuManager.js';
+import { Minimap } from '../ui/Minimap.js';
 import { loadTrack } from '../tracks/TrackLoader.js';
 import { Kart } from '../entities/Kart.js';
 
@@ -62,6 +63,7 @@ export class Game {
         this.input = new InputManager();
         this.menuManager = new MenuManager(this);
         this.hud = new HUDController();
+        this.minimap = new Minimap();
         this.cameraController = null;
         this.checkpointManager = null;
 
@@ -211,6 +213,8 @@ export class Game {
         this.state = 'COUNTDOWN';
         this.menuManager.hideAll();
         this.hud.show();
+        this.minimap.setTrack(this.track);
+        this.minimap.show();
         this.input.showTouchControls(true);
         this.hud.update(0, 1, this.track.laps, 0, false);
 
@@ -256,6 +260,7 @@ export class Game {
         }
 
         this.hud.hide();
+        this.minimap.hide();
         this.input.showTouchControls(false);
         this.menuManager.showScreen('main-menu');
     }
@@ -338,6 +343,7 @@ export class Game {
                     this.checkpointManager.lapTimes
                 );
                 this.hud.hide();
+                this.minimap.hide();
                 this.input.showTouchControls(false);
             }
         }
@@ -351,6 +357,9 @@ export class Game {
             this.kart.isDrifting,
             this.kart.driftBoostLevel
         );
+
+        // Update minimap with player position
+        this.minimap.update(this.kart.position, this.kart.rotation);
     }
 
     animate() {

@@ -17,10 +17,12 @@ export class InputManager {
             left: false,
             right: false,
             drift: false,
-            pause: false
+            pause: false,
+            cameraToggle: false
         };
         this.pausePressed = false;
         this.enterPressed = false;
+        this.cameraTogglePressed = false;
 
         // Touch state
         this.isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -115,6 +117,12 @@ export class InputManager {
                     this.enterPressed = true;
                 }
                 break;
+            case 'KeyC':
+                if (!this.cameraTogglePressed) {
+                    this.keys.cameraToggle = true;
+                    this.cameraTogglePressed = true;
+                }
+                break;
         }
     }
 
@@ -127,6 +135,7 @@ export class InputManager {
             case 'Space': this.keys.drift = false; break;
             case 'Escape': this.pausePressed = false; break;
             case 'Enter': this.enterPressed = false; break;
+            case 'KeyC': this.cameraTogglePressed = false; break;
         }
     }
 
@@ -139,6 +148,12 @@ export class InputManager {
     consumeEnter() {
         const was = this.keys.enter;
         this.keys.enter = false;
+        return was;
+    }
+
+    consumeCameraToggle() {
+        const was = this.keys.cameraToggle;
+        this.keys.cameraToggle = false;
         return was;
     }
 }

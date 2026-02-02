@@ -15,6 +15,10 @@ export class CameraController {
         this.currentPosition = new THREE.Vector3();
         this.currentLookAt = new THREE.Vector3();
 
+        // Camera mode system
+        this.cameraMode = 'THIRD_PERSON';
+        this.modes = ['THIRD_PERSON', 'FIRST_PERSON'];
+
         // Lag system - camera trails behind actual target
         this.laggedPosition = new THREE.Vector3();
         this.lagVelocity = new THREE.Vector3();
@@ -36,6 +40,16 @@ export class CameraController {
     }
 
     update(kartPosition, kartRotation, kartSpeed, isBoosting = false, kart = null) {
+        // Dispatch to appropriate camera mode handler
+        if (this.cameraMode === 'FIRST_PERSON') {
+            this.updateFirstPerson(kartPosition, kartRotation, kartSpeed, isBoosting, kart);
+            return;
+        }
+
+        this.updateThirdPerson(kartPosition, kartRotation, kartSpeed, isBoosting, kart);
+    }
+
+    updateThirdPerson(kartPosition, kartRotation, kartSpeed, isBoosting, kart) {
         const c = CONFIG.camera;
         const dt = 1 / 60; // Approximate delta
 
@@ -161,6 +175,95 @@ export class CameraController {
         this.camera.updateProjectionMatrix();
     }
 
+    updateFirstPerson(kartPosition, kartRotation, kartSpeed, isBoosting, kart) {
+        const hc = CONFIG.hoodCam;
+        const dt = 1 / 60;
+
+        // Get forward direction from kart
+        const forward = kart?.getCarForward?.() ||
+            new THREE.Vector3(Math.sin(kartRotation), 0, Math.cos(kartRotation));
+
+        // Position: at hood of car
+        const camPos = kartPosition.clone()
+            .add(forward.clone().multiplyScalar(hc.forwardOffset))
+            .add(new THREE.Vector3(0, hc.heightOffset, 0));
+
+        // Apply terrain orientation if available (so camera tilts with car on slopes)
+        if (kart?.orientationQuat) {
+            // Rotate the height offset by the kart's orientation
+            const upOffset = new THREE.Vector3(0, hc.heightOffset, 0);
+            upOffset.applyQuaternion(kart.orientationQuat);
+            camPos.copy(kartPosition)
+                .add(forward.clone().multiplyScalar(hc.forwardOffset))
+                .add(upOffset);
+        }
+
+        // Look at: point ahead in driving direction
+        const lookAt = camPos.clone()
+            .add(forward.clone().multiplyScalar(hc.lookAheadDistance));
+
+        // Reduced shake for first-person (less nauseating)
+        if (isBoosting) {
+            this.shakeIntensity = Math.max(
+                this.shakeIntensity,
+                CONFIG.camera.boostShakeIntensity * hc.shakeMultiplier
+            );
+        }
+
+        if (this.shakeIntensity > 0.001) {
+            this.shakeTime += dt * 60;
+            const shake1 = Math.sin(this.shakeTime * 23.7) * Math.cos(this.shakeTime * 17.3);
+            const shake2 = Math.sin(this.shakeTime * 31.1) * Math.cos(this.shakeTime * 11.9);
+
+            this.shakeOffset.set(
+                shake1 * this.shakeIntensity * hc.shakeMultiplier,
+                shake2 * this.shakeIntensity * hc.shakeMultiplier * 0.6,
+                0
+            );
+            this.shakeIntensity *= Math.exp(-CONFIG.camera.shakeDecay * dt);
+        } else {
+            this.shakeOffset.set(0, 0, 0);
+        }
+
+        // Apply position with shake
+        this.camera.position.copy(camPos).add(this.shakeOffset);
+        this.camera.lookAt(lookAt);
+
+        // Apply terrain orientation to camera (tilt with car)
+        if (kart?.orientationQuat) {
+            // Extract the roll from the kart's orientation and apply to camera
+            const kartUp = new THREE.Vector3(0, 1, 0).applyQuaternion(kart.orientationQuat);
+            const worldUp = new THREE.Vector3(0, 1, 0);
+
+            // Get the roll component
+            const kartRight = new THREE.Vector3(1, 0, 0).applyQuaternion(kart.orientationQuat);
+            const rollAngle = Math.atan2(kartRight.y, Math.sqrt(kartRight.x * kartRight.x + kartRight.z * kartRight.z));
+
+            // Apply subtle roll to camera (less extreme than kart roll)
+            this.camera.rotateZ(rollAngle * 0.5);
+        }
+
+        // FOV: slightly boosted, with boost bonus
+        const boostFovBonus = isBoosting ? 5 : 0;
+        const targetFov = hc.fov + boostFovBonus;
+        this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, 0.12);
+        this.camera.fov = this.currentFov;
+        this.camera.updateProjectionMatrix();
+    }
+
+    // Toggle between camera modes
+    toggleMode() {
+        const currentIndex = this.modes.indexOf(this.cameraMode);
+        const nextIndex = (currentIndex + 1) % this.modes.length;
+        this.cameraMode = this.modes[nextIndex];
+        return this.cameraMode;
+    }
+
+    // Get current camera mode
+    getMode() {
+        return this.cameraMode;
+    }
+
     // Add manual shake (for collisions, etc.)
     addShake(intensity) {
         this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
@@ -168,6 +271,10 @@ export class CameraController {
 
     reset(kartPosition, kartRotation) {
         const c = CONFIG.camera;
+
+        // Reset to third-person mode on race start
+        this.cameraMode = 'THIRD_PERSON';
+
         const offset = new THREE.Vector3(
             -Math.sin(kartRotation) * c.distance,
             c.height,

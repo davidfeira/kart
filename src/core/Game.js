@@ -284,6 +284,14 @@ export class Game {
             }
         }
 
+        // Handle camera toggle (C key)
+        if (this.input.consumeCameraToggle()) {
+            if (this.state === 'RACING' && this.cameraController) {
+                const newMode = this.cameraController.toggleMode();
+                gameLog.info('Camera mode changed', { mode: newMode });
+            }
+        }
+
         if (this.state !== 'RACING') return;
 
         // Update race time

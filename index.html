@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6,21 +6,26 @@
     <meta name="screen-orientation" content="landscape">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Kart Racing</title>
+    <title>Kali Karts</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <canvas id="game-canvas"></canvas>
 
+    <!-- CRT Scanline Effect Overlay -->
+    <div class="crt-overlay"></div>
+
     <!-- Main Menu -->
     <div id="main-menu" class="menu-overlay">
-        <h1 class="menu-title">KART RACING</h1>
-        <p class="menu-subtitle">Press ENTER to Start</p>
+        <h1 class="menu-title">Kali Karts</h1>
+        <p class="menu-subtitle">Press Enter to Start</p>
         <div class="menu-buttons">
-            <button class="menu-btn selected" data-action="start">START RACE</button>
+            <button class="menu-btn selected" data-action="start">Start Race</button>
+            <button class="menu-btn" data-action="time-attack">Time Attack</button>
+            <button class="menu-btn" data-action="options">Options</button>
         </div>
         <div class="controls-hint">
-            <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move
+            <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Drive
             <kbd>SPACE</kbd> Drift
             <kbd>ESC</kbd> Pause
         </div>
@@ -29,26 +34,28 @@
     <!-- Kart Select -->
     <div id="kart-select" class="menu-overlay hidden">
         <div class="select-screen">
-            <button class="back-btn" data-action="back">â† BACK</button>
-            <h2 class="select-title">SELECT YOUR KART</h2>
+            <button class="back-btn" data-action="back">← Back</button>
+            <h2 class="select-title">Select Machine</h2>
+            <p class="section-label">Choose Your Racing Machine</p>
             <div class="select-container" id="kart-options"></div>
-            <button class="confirm-btn" data-action="confirm">SELECT</button>
+            <button class="confirm-btn" data-action="confirm">Select</button>
         </div>
     </div>
 
     <!-- Track Select -->
     <div id="track-select" class="menu-overlay hidden">
         <div class="select-screen">
-            <button class="back-btn" data-action="back">â† BACK</button>
-            <h2 class="select-title">SELECT TRACK</h2>
+            <button class="back-btn" data-action="back">← Back</button>
+            <h2 class="select-title">Select Course</h2>
+            <p class="section-label">Choose Your Racing Circuit</p>
             <div class="select-container" id="track-options"></div>
-            <button class="confirm-btn" data-action="confirm">RACE!</button>
+            <button class="confirm-btn" data-action="confirm">Race!</button>
         </div>
     </div>
 
     <!-- Loading -->
     <div id="loading" class="menu-overlay loading-overlay hidden">
-        <p class="loading-text">LOADING TRACK...</p>
+        <p class="loading-text">Loading Course...</p>
         <div class="loading-bar">
             <div class="loading-bar-fill" id="loading-bar"></div>
         </div>
@@ -74,46 +81,46 @@
 
     <!-- Pause Menu -->
     <div id="pause-menu" class="menu-overlay pause-overlay hidden">
-        <h2 class="pause-title">PAUSED</h2>
+        <h2 class="pause-title">Paused</h2>
         <div class="menu-buttons">
-            <button class="menu-btn selected" data-action="resume">RESUME</button>
-            <button class="menu-btn" data-action="restart">RESTART</button>
-            <button class="menu-btn" data-action="quit">QUIT TO MENU</button>
+            <button class="menu-btn selected" data-action="resume">Resume</button>
+            <button class="menu-btn" data-action="restart">Restart</button>
+            <button class="menu-btn" data-action="quit">Quit to Menu</button>
         </div>
     </div>
 
     <!-- Finish Screen -->
     <div id="finish-screen" class="menu-overlay finish-overlay hidden">
-        <h2 class="finish-title">FINISH!</h2>
+        <h2 class="finish-title">Finish!</h2>
         <div class="finish-time" id="finish-total-time">0:00.000</div>
-        <p class="finish-label">TOTAL TIME</p>
+        <p class="finish-label">Total Time</p>
         <div class="lap-times" id="lap-times"></div>
         <div class="menu-buttons">
-            <button class="menu-btn selected" data-action="restart">RACE AGAIN</button>
-            <button class="menu-btn" data-action="quit">MAIN MENU</button>
+            <button class="menu-btn selected" data-action="restart">Race Again</button>
+            <button class="menu-btn" data-action="quit">Main Menu</button>
         </div>
     </div>
 
     <!-- Rotate Device Overlay (portrait mode) -->
     <div id="rotate-device" class="rotate-overlay">
         <div class="rotate-content">
-            <div class="rotate-icon">ðŸ“±â†»</div>
-            <p>Rotate your device to landscape</p>
+            <div class="rotate-icon">📱↻</div>
+            <p>Rotate Your Device to Landscape</p>
         </div>
     </div>
 
     <!-- Mobile Touch Controls -->
     <div id="touch-controls" class="touch-controls hidden">
         <div class="steering-buttons">
-            <button id="left-btn" class="touch-btn steer-btn">â—€</button>
-            <button id="right-btn" class="touch-btn steer-btn">â–¶</button>
+            <button id="left-btn" class="touch-btn steer-btn">◀</button>
+            <button id="right-btn" class="touch-btn steer-btn">▶</button>
         </div>
         <div class="pedal-buttons">
             <button id="gas-btn" class="touch-btn gas-btn">GO</button>
             <button id="brake-btn" class="touch-btn brake-btn">REV</button>
         </div>
         <button id="drift-btn" class="touch-btn drift-btn-new">DRIFT</button>
-        <button id="pause-btn" class="touch-btn pause-btn-mobile">âšâš</button>
+        <button id="pause-btn" class="touch-btn pause-btn-mobile">⏸︎</button>
     </div>
 
     <script type="importmap">

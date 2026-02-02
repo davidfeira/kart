@@ -96,7 +96,7 @@ export function getAvailableTracks() {
     // For now, hardcoded list. Could be dynamic later.
     return [
         { id: 'ridge_circuit', name: 'Ridge Circuit', difficulty: 2 },
-        // Future tracks added here
+        { id: 'drift_canyon', name: 'Drift Canyon', difficulty: 3 }
     ];
 }
 

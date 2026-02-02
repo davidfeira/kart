@@ -15,6 +15,11 @@ const TRACK_LIST = {
         name: 'Ridge Circuit',
         description: 'Flowing high-speed circuit with sweeping curves and elevation changes',
         difficulty: 2
+    },
+    drift_canyon: {
+        name: 'Drift Canyon',
+        description: 'Long straights for top speed, punishing hairpins demand precise braking',
+        difficulty: 3
     }
 };
 

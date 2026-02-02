@@ -14,7 +14,7 @@ import { CheckpointManager } from '../systems/CheckpointManager.js';
 import { CameraController } from './CameraController.js';
 import { HUDController } from '../ui/HUDController.js';
 import { MenuManager } from '../ui/MenuManager.js';
-import { TrackGenerator } from '../tracks/TrackGenerator.js';
+import { loadTrack } from '../tracks/TrackLoader.js';
 import { Kart } from '../entities/Kart.js';
 
 const gameLog = Logger.getLogger('Game');
@@ -62,11 +62,11 @@ export class Game {
         this.input = new InputManager();
         this.menuManager = new MenuManager(this);
         this.hud = new HUDController();
-        this.trackGenerator = new TrackGenerator(this.scene);
         this.cameraController = null;
         this.checkpointManager = null;
 
         // Game objects
+        this.track = null;
         this.kart = null;
 
         // Timing
@@ -165,27 +165,44 @@ export class Game {
         await new Promise(r => setTimeout(r, 100));
         this.menuManager.showLoading(0.3);
 
-        // Generate track
-        const trackData = this.trackGenerator.generate(trackType);
-        this.menuManager.showLoading(0.6);
+        // Clear previous track
+        if (this.track) {
+            this.track.dispose(this.scene);
+            this.track = null;
+        }
 
+        // Load new track from JSON
+        try {
+            this.track = await loadTrack(trackType);
+            this.track.addToScene(this.scene);
+        } catch (error) {
+            gameLog.error('Failed to load track', { trackType, error: error.message });
+            this.quitToMenu();
+            return;
+        }
+
+        this.menuManager.showLoading(0.6);
         await new Promise(r => setTimeout(r, 100));
+
+        // Get start position from track
+        const { position: startPosition, rotation: startRotation } = this.track.getStartPosition();
 
         // Create kart
         if (this.kart) this.kart.dispose();
         this.kart = new Kart(kartType, this.scene);
-        this.kart.reset(trackData.startPosition, trackData.startRotation);
+        this.kart.reset(startPosition, startRotation);
 
         // Initialize track frame at start position
-        this.kart.trackFrame = this.trackGenerator.getTrackFrame(trackData.startPosition, 0.02);
+        this.kart.trackFrame = this.track.getTrackFrame(startPosition, 0.02);
         this.kart.lastTrackT = this.kart.trackFrame.t;
 
         // Setup camera
         this.cameraController = new CameraController(this.camera);
-        this.cameraController.reset(trackData.startPosition, trackData.startRotation);
+        this.cameraController.reset(startPosition, startRotation);
 
         // Setup checkpoints
-        this.checkpointManager = new CheckpointManager(trackData.checkpoints);
+        const checkpoints = this.track.getCheckpointPositions();
+        this.checkpointManager = new CheckpointManager(checkpoints);
 
         this.menuManager.showLoading(1.0);
         await new Promise(r => setTimeout(r, 200));
@@ -195,7 +212,7 @@ export class Game {
         this.menuManager.hideAll();
         this.hud.show();
         this.input.showTouchControls(true);
-        this.hud.update(0, 1, CONFIG.race.totalLaps, 0, false);
+        this.hud.update(0, 1, this.track.laps, 0, false);
 
         await this.menuManager.showCountdown();
 
@@ -204,7 +221,7 @@ export class Game {
         this.raceTime = 0;
         this.checkpointManager.reset(0);
         this.clock.start();
-        gameLog.info('Race started', { totalLaps: CONFIG.race.totalLaps });
+        gameLog.info('Race started', { totalLaps: this.track.laps });
     }
 
     resumeRace() {
@@ -233,7 +250,11 @@ export class Game {
             this.kart = null;
         }
 
-        this.trackGenerator.clear();
+        if (this.track) {
+            this.track.dispose(this.scene);
+            this.track = null;
+        }
+
         this.hud.hide();
         this.input.showTouchControls(false);
         this.menuManager.showScreen('main-menu');
@@ -269,10 +290,10 @@ export class Game {
         this.raceTime += delta * 1000;
 
         // Update kart physics with track-relative system (R4 style)
-        this.kart.update(this.input.keys, delta, this.trackGenerator);
+        this.kart.update(this.input.keys, delta, this.track);
 
         // Check track boundaries
-        const collision = this.trackGenerator.getTrackBoundaryCollision(
+        const collision = this.track.getTrackBoundaryCollision(
             this.kart.position,
             this.kart.boundingRadius
         );
@@ -313,7 +334,7 @@ export class Game {
         this.hud.update(
             this.raceTime,
             this.checkpointManager.lap,
-            CONFIG.race.totalLaps,
+            this.track.laps,
             this.kart.forwardSpeed,
             this.kart.isDrifting,
             this.kart.driftBoostLevel

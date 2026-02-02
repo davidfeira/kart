@@ -342,14 +342,14 @@ export function updateOrientation(kart, dt) {
 
     if (kart.surfaceAttached && kart.trackFrame) {
         terrainNormal = kart.trackFrame.normal;
-        lerpFactor = 1 - Math.exp(-10 * dt);
+        lerpFactor = 1 - Math.exp(-20 * dt); // Responsive since normal is pre-smoothed
     } else if (kart.isGrounded && kart.groundNormal) {
         terrainNormal = kart.groundNormal;
-        lerpFactor = 1 - Math.exp(-8 * dt);
+        lerpFactor = 1 - Math.exp(-15 * dt);
     } else {
-        // In air - align to world up
+        // In air - align to world up more slowly (looks better)
         terrainNormal = _up.set(0, 1, 0);
-        lerpFactor = 1 - Math.exp(-2 * dt);
+        lerpFactor = 1 - Math.exp(-4 * dt);
     }
 
     // Get car's heading (yaw rotation)

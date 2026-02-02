@@ -135,7 +135,9 @@ export class Kart {
                 speed: this.forwardSpeed.toFixed(1),
                 drift: this.driftState,
                 attached: this.surfaceAttached,
-                trackT: this.lastTrackT?.toFixed(3) || 'N/A'
+                trackT: this.lastTrackT?.toFixed(3) || 'N/A',
+                slope: (this.trackFrame?.slope * 180 / Math.PI)?.toFixed(1) || '0',
+                banking: (this.trackFrame?.banking * 180 / Math.PI)?.toFixed(1) || '0'
             });
         }
 
@@ -147,7 +149,7 @@ export class Kart {
     updateTrackPhysics(input, dt, trackGenerator, mod) {
         const p = CONFIG.physics;
 
-        // Store previous track frame for ramp detection
+        // Store previous track frame for ramp detection and smoothing
         if (this.trackFrame) {
             this.previousTrackFrame = this.trackFrame.clone();
         }
@@ -155,6 +157,15 @@ export class Kart {
         // Get current track frame (optimized with lastT cache)
         this.trackFrame = trackGenerator.getTrackFrame(this.position, this.lastTrackT);
         this.lastTrackT = this.trackFrame.t;
+
+        // Smooth the track frame normal to reduce orientation jitter
+        // Higher rate = more responsive, lower rate = smoother but laggier
+        if (this.previousTrackFrame) {
+            const smoothRate = 40; // 15=very smooth/laggy, 40=balanced, 80=responsive
+            const normalSmoothFactor = 1 - Math.exp(-smoothRate * dt);
+            this.trackFrame.normal.lerp(this.previousTrackFrame.normal, 1 - normalSmoothFactor);
+            this.trackFrame.normal.normalize();
+        }
 
         // Smooth track frame position Y to prevent sudden jumps from causing detachment
         // Only when attached and previous frame exists
@@ -204,8 +215,12 @@ export class Kart {
         this.updateLocalBoost(dt);
 
         // ===== FRICTION =====
+        // Apply frame-rate independent friction using exponential decay
         if (this.surfaceAttached) {
-            this.localVelocity.x *= (1 - p.groundFriction);
+            // groundFriction is the decay rate per second (e.g., 0.02 = 2% per second)
+            // Use exponential decay: speed *= e^(-friction * dt)
+            const frictionDecay = Math.exp(-p.groundFriction * 60 * dt);
+            this.localVelocity.x *= frictionDecay;
         }
 
         // ===== SPEED LIMITS =====
@@ -430,13 +445,22 @@ export class Kart {
         const tp = p.trackPhysics;
 
         if (this.surfaceAttached) {
-            // Calculate slope relative to car's forward direction
-            const forward = this.getCarForward();
-            const slopeDot = -(forward.x * this.trackFrame.normal.x + forward.z * this.trackFrame.normal.z);
-            const slopeAngle = Math.asin(THREE.MathUtils.clamp(slopeDot, -1, 1));
+            // Use the track frame's pre-computed slope value
+            // slope is in radians, positive = going uphill along track tangent
+            // We need to account for car heading vs track tangent direction
+            const trackSlope = this.trackFrame.slope || 0;
 
-            // Apply gravity along slope
-            const slopeGravity = tp.gravityAlongTrack * Math.sin(slopeAngle);
+            // Calculate how aligned the car is with the track direction
+            const forward = this.getCarForward();
+            const tangentDot = forward.x * this.trackFrame.tangent.x + forward.z * this.trackFrame.tangent.z;
+
+            // Apply slope effect based on car's alignment with track direction
+            // If car faces same direction as tangent, use slope as-is
+            // If car faces opposite, reverse the slope effect
+            const effectiveSlope = trackSlope * tangentDot;
+
+            // Apply gravity along slope (positive slope = uphill = slow down)
+            const slopeGravity = tp.gravityAlongTrack * Math.sin(effectiveSlope);
             this.localVelocity.x -= slopeGravity * dt;
 
             // No vertical velocity when attached to surface

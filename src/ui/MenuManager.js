@@ -7,14 +7,22 @@
 
 import * as THREE from 'three';
 import { KART_TYPES } from '../entities/kartTypes.js';
-import { TRACK_PRESETS } from '../tracks/trackPresets.js';
 import { createKartGeometry } from '../entities/KartFactory.js';
+
+// Track metadata for menu display
+const TRACK_LIST = {
+    ridge_circuit: {
+        name: 'Ridge Circuit',
+        description: 'Flowing high-speed circuit with elevation changes',
+        difficulty: 2
+    }
+};
 
 export class MenuManager {
     constructor(game) {
         this.game = game;
         this.selectedKart = 'dart';
-        this.selectedTrack = 'oval';
+        this.selectedTrack = 'ridge_circuit';
 
         // Get elements
         this.mainMenu = document.getElementById('main-menu');
@@ -135,7 +143,7 @@ export class MenuManager {
         const container = document.getElementById('track-options');
         container.innerHTML = '';
 
-        Object.entries(TRACK_PRESETS).forEach(([key, config]) => {
+        Object.entries(TRACK_LIST).forEach(([key, config]) => {
             const card = document.createElement('div');
             card.className = 'select-card track-card' + (key === this.selectedTrack ? ' selected' : '');
             card.dataset.track = key;
@@ -145,7 +153,9 @@ export class MenuManager {
 
             card.innerHTML = `
                 <div class="preview" id="track-preview-${key}">
-                    <canvas id="track-minimap-${key}" width="240" height="160"></canvas>
+                    <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#666;">
+                        Track Preview
+                    </div>
                 </div>
                 <div class="name">${config.name}</div>
                 <div class="description">${config.description}</div>
@@ -159,61 +169,6 @@ export class MenuManager {
             });
 
             container.appendChild(card);
-        });
-
-        // Draw minimaps
-        setTimeout(() => this.drawMinimaps(), 100);
-    }
-
-    drawMinimaps() {
-        Object.entries(TRACK_PRESETS).forEach(([key, preset]) => {
-            const canvas = document.getElementById(`track-minimap-${key}`);
-            if (!canvas) return;
-
-            const ctx = canvas.getContext('2d');
-            const points = preset.generatePath();
-
-            // Find bounds
-            let minX = Infinity, maxX = -Infinity;
-            let minZ = Infinity, maxZ = -Infinity;
-            points.forEach(p => {
-                minX = Math.min(minX, p.x);
-                maxX = Math.max(maxX, p.x);
-                minZ = Math.min(minZ, p.z);
-                maxZ = Math.max(maxZ, p.z);
-            });
-
-            const padding = 20;
-            const scaleX = (canvas.width - padding * 2) / (maxX - minX);
-            const scaleZ = (canvas.height - padding * 2) / (maxZ - minZ);
-            const scale = Math.min(scaleX, scaleZ);
-
-            const offsetX = (canvas.width - (maxX - minX) * scale) / 2;
-            const offsetZ = (canvas.height - (maxZ - minZ) * scale) / 2;
-
-            ctx.fillStyle = '#1a1a2e';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            ctx.beginPath();
-            points.forEach((p, i) => {
-                const x = (p.x - minX) * scale + offsetX;
-                const z = (p.z - minZ) * scale + offsetZ;
-                if (i === 0) ctx.moveTo(x, z);
-                else ctx.lineTo(x, z);
-            });
-            ctx.closePath();
-            ctx.strokeStyle = '#00ffff';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-
-            // Start position marker
-            const start = points[0];
-            const sx = (start.x - minX) * scale + offsetX;
-            const sz = (start.z - minZ) * scale + offsetZ;
-            ctx.fillStyle = '#00ff00';
-            ctx.beginPath();
-            ctx.arc(sx, sz, 6, 0, Math.PI * 2);
-            ctx.fill();
         });
     }
 

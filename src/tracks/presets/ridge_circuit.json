@@ -1,0 +1,43 @@
+{
+  "name": "Ridge Circuit",
+  "theme": "default",
+  "laps": 3,
+
+  "path": {
+    "waypoints": [
+      { "pos": [0, 0, 0], "width": 24, "banking": 0 },
+      { "pos": [40, 0, 0], "width": 24, "banking": 0 },
+      { "pos": [80, 0, 10], "width": 24, "banking": 0 },
+      { "pos": [120, 0, 30], "width": 24, "banking": 0.1 },
+      { "pos": [150, 2, 60], "width": 24, "banking": 0.15 },
+      { "pos": [170, 4, 100], "width": 24, "banking": 0.2 },
+      { "pos": [175, 5, 140], "width": 24, "banking": 0.2 },
+      { "pos": [165, 6, 180], "width": 24, "banking": 0.15 },
+      { "pos": [140, 6, 210], "width": 24, "banking": 0.1 },
+      { "pos": [100, 5, 230], "width": 24, "banking": 0.05 },
+      { "pos": [50, 4, 240], "width": 24, "banking": 0 },
+      { "pos": [0, 3, 240], "width": 24, "banking": 0 },
+      { "pos": [-50, 2, 230], "width": 24, "banking": -0.05 },
+      { "pos": [-100, 1, 210], "width": 24, "banking": -0.1 },
+      { "pos": [-140, 0, 180], "width": 24, "banking": -0.15 },
+      { "pos": [-165, 0, 140], "width": 24, "banking": -0.2 },
+      { "pos": [-175, 1, 100], "width": 24, "banking": -0.2 },
+      { "pos": [-170, 2, 60], "width": 24, "banking": -0.15 },
+      { "pos": [-150, 3, 30], "width": 24, "banking": -0.1 },
+      { "pos": [-120, 2, 10], "width": 24, "banking": -0.05 },
+      { "pos": [-80, 1, 0], "width": 24, "banking": 0 },
+      { "pos": [-40, 0, 0], "width": 24, "banking": 0 }
+    ],
+    "closed": true
+  },
+
+  "surfaces": [
+    { "start": 0.0, "end": 1.0, "type": "road" }
+  ],
+
+  "features": [],
+  "hazards": [],
+  "decorations": [],
+
+  "checkpoints": [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+}
